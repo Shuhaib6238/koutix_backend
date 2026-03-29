@@ -1,0 +1,38 @@
+# ── Dependencies ──────────────────────────────────────────
+node_modules/
+
+# ── Environment ───────────────────────────────────────────
+.env
+.env.local
+.env.production
+
+
+# ── Firebase service account (NEVER commit) ───────────────
+firebase-service-account.json
+*-service-account.json
+
+# ── Build / output ────────────────────────────────────────
+dist/
+build/
+
+# ── Logs ──────────────────────────────────────────────────
+logs/
+*.log
+npm-debug.log*
+
+# ── Test coverage ─────────────────────────────────────────
+coverage/
+
+# ── OS files ──────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── IDE ───────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+
+.env
+*.json
+src/config/*.json

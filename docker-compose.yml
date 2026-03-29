@@ -1,0 +1,88 @@
+version: '3.9'
+
+services:
+
+  # ── API (production image) ─────────────────────────────
+  api:
+    build:
+      context: .
+      target: runner
+    ports:
+      - '5000:5000'
+    env_file: .env
+    environment:
+      NODE_ENV:    production
+      MONGODB_URI: mongodb://mongo:27017/koutix
+      REDIS_URL:   redis://redis:6379
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./logs:/app/logs
+    restart: unless-stopped
+    networks:
+      - koutix-net
+
+  # ── MongoDB ────────────────────────────────────────────
+  mongo:
+    image: mongo:7
+    ports:
+      - '27017:27017'
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      interval: 10s
+      timeout:  5s
+      retries:  5
+    networks:
+      - koutix-net
+
+  # ── Redis ──────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    ports:
+      - '6379:6379'
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test:     ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout:  3s
+      retries:  5
+    networks:
+      - koutix-net
+
+  # ── Dev server (hot reload with nodemon) ───────────────
+  api-dev:
+    image: node:20-alpine
+    working_dir: /app
+    command: npm run dev
+    ports:
+      - '5001:5000'
+    env_file: .env
+    environment:
+      NODE_ENV:    development
+      MONGODB_URI: mongodb://mongo:27017/koutix_dev
+      REDIS_URL:   redis://redis:6379
+    depends_on:
+      - mongo
+      - redis
+    volumes:
+      - .:/app
+      - /app/node_modules
+    networks:
+      - koutix-net
+    profiles:
+      - dev   # only starts with: docker compose --profile dev up
+
+volumes:
+  mongo-data:
+  redis-data:
+
+networks:
+  koutix-net:
+    driver: bridge
