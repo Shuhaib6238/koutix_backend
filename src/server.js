@@ -18,7 +18,7 @@ async function bootstrap() {
     await connectDB()
     await connectRedis()
     initFirebaseAdmin()
-    startWorkers()
+    // startWorkers()
 
     // Start HTTP server
     const server = app.listen(PORT, () => {

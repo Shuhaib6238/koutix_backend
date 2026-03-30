@@ -1,9 +1,9 @@
 // ============================================================
 // SelfPay — Stores Controller
 // ============================================================
-const { Store, Order, User } = require('../models')
+const { Store, Order, User, BranchManager, InviteToken } = require('../models')
 const { encrypt } = require('../utils/encryption')
-const { success, successList, error, getPaginationParams, getDateRange, generateInviteToken } = require('../utils')
+const { success, successList, error, getPaginationParams, getDateRange } = require('../utils')
 const { sendPushNotification } = require('../config/firebase')
 const { sendInviteEmail } = require('../services/notification/email')
 const { cache } = require('../config/redis')
@@ -162,38 +162,70 @@ async function getStoreStats(req, res, next) {
 async function inviteManager(req, res, next) {
   try {
     const { storeId } = req.params
-    const { email, name } = req.body
-    const inviter = req.user // chainManager
+    const { email, name, phone, address } = req.body
+    const inviter = req.user
 
     const store = await Store.findById(storeId)
     if (!store) {
       return error(res, 'Store not found', 404)
     }
 
-    const existing = await User.findOne({ email, isActive: true })
-    if (existing) {
-      return error(res, 'User with this email already exists', 409)
-    }
+    // Use current chain manager's chainId
+    const chainId = store.chainId || inviter.chainId
 
-    const token = generateInviteToken()
-    const hashedToken = crypto.createHash('sha256').update(token).digest('hex')
+    const token = crypto.randomUUID()
+    const expiresAt = new Date(Date.now() + 48 * 60 * 60 * 1000)
 
-    await User.findOneAndUpdate(
-      { email },
+    // 1. Create/Update InviteToken (SelfPay system)
+    await InviteToken.findOneAndUpdate(
+      { email, chainId },
       {
+        token,
         email,
-        role: 'branchManager',
-        storeId,
-        chainId:       store.chainId,
-        isActive:      false,
-        inviteToken:   hashedToken,
-        inviteExpires: new Date(Date.now() + 48 * 60 * 60 * 1000),
-        uid:           `pending_${Date.now()}`,
-        name:          name || email,
+        chainId,
+        branchName: store.name,
+        expiresAt,
+        used:       false,
       },
       { upsert: true, new: true }
     )
 
+    // 2. Create/Update BranchManager (SelfPay system)
+    await BranchManager.findOneAndUpdate(
+      { email, chainId },
+      {
+        email,
+        chainId,
+        name,
+        phone,
+        branchName:    store.name,
+        branchAddress: address,
+        isActive:      false,
+      },
+      { upsert: true, new: true }
+    )
+
+    // 3. Keep User record (migration support)
+    const hashedToken = crypto.createHash('sha256').update(token).digest('hex')
+    
+    await User.findOneAndUpdate(
+      { email },
+      {
+        email,
+        name,
+        phone,
+        address,
+        role:          'branchManager',
+        storeId,
+        chainId,
+        isActive:      false,
+        inviteToken:   hashedToken,
+        inviteExpires: expiresAt,
+      },
+      { upsert: true, new: true }
+    )
+
+    // 4. Send Invite Email (using the same token for both systems)
     await sendInviteEmail({
       to:          email,
       managerName: name,
@@ -203,8 +235,8 @@ async function inviteManager(req, res, next) {
       inviterName: inviter.name,
     })
 
-    logger.info(`Invite sent to ${email} for store ${store.name}`)
-    return success(res, null, 200, 'Invitation sent successfully')
+    logger.info(`Branch Manager invite sent to ${email} for store ${store.name}`)
+    return success(res, null, 200, 'Invitation sent successfully with full details')
   } catch (err) { next(err) }
 }
 

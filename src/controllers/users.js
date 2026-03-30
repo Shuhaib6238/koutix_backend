@@ -14,12 +14,16 @@ async function inviteUser(req, res, next) {
     const inviter = req.user
 
     const existing = await User.findOne({ email, isActive: true })
-    if (existing) return error(res, 'User with this email already exists and is active', 409)
+    if (existing) {
+      return error(res, 'User with this email already exists and is active', 409)
+    }
 
     let storeName
     if (storeId) {
       const store = await Store.findById(storeId)
-      if (!store) return error(res, 'Store not found', 404)
+      if (!store) {
+        return error(res, 'Store not found', 404)
+      }
       storeName = store.name
     }
 
@@ -36,7 +40,6 @@ async function inviteUser(req, res, next) {
         isActive:      false,
         inviteToken:   hashedToken,
         inviteExpires: new Date(Date.now() + 48 * 60 * 60 * 1000),
-        uid:           `pending_${Date.now()}`,
         name:          email,
       },
       { upsert: true, new: true }
@@ -58,7 +61,9 @@ async function inviteUser(req, res, next) {
 async function resendInvite(req, res, next) {
   try {
     const user = await User.findById(req.params.id)
-    if (!user || user.isActive) return error(res, 'User not found or already active', 400)
+    if (!user || user.isActive) {
+      return error(res, 'User not found or already active', 400)
+    }
 
     const token = generateInviteToken()
     const hashedToken = crypto.createHash('sha256').update(token).digest('hex')
@@ -83,8 +88,12 @@ async function resendInvite(req, res, next) {
 async function deactivateUser(req, res, next) {
   try {
     const user = await User.findByIdAndUpdate(req.params.id, { isActive: false }, { new: true })
-    if (!user) return error(res, 'User not found', 404)
-    if (user.uid && !user.uid.startsWith('pending_')) await revokeUserTokens(user.uid)
+    if (!user) {
+      return error(res, 'User not found', 404)
+    }
+    if (user.firebaseUid) {
+      await revokeUserTokens(user.firebaseUid)
+    }
     return success(res, user)
   } catch (err) { next(err) }
 }
@@ -92,7 +101,9 @@ async function deactivateUser(req, res, next) {
 async function activateUser(req, res, next) {
   try {
     const user = await User.findByIdAndUpdate(req.params.id, { isActive: true }, { new: true })
-    if (!user) return error(res, 'User not found', 404)
+    if (!user) {
+      return error(res, 'User not found', 404)
+    }
     return success(res, user)
   } catch (err) { next(err) }
 }

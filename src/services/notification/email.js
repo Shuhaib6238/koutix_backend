@@ -17,7 +17,11 @@ function getResend() {
   return resend
 }
 
-const FROM    = process.env.RESEND_FROM_EMAIL || 'noreply@koutix.com'
+// In development, Resend only allows sending from onboarding@resend.dev 
+// until your custom domain (e.g., koutix.com) is verified in the dashboard.
+const FROM = process.env.NODE_ENV === 'production'
+  ? (process.env.RESEND_FROM_EMAIL || 'noreply@koutix.com')
+  : 'onboarding@resend.dev'
 const APP_URL = process.env.APP_URL || 'http://localhost:3000'
 
 // ── Invite email ──────────────────────────────────────────
@@ -94,6 +98,13 @@ async function sendInviteEmail({ to, storeName, role, inviteToken, inviterName, 
 </html>`
 
   try {
+    if (process.env.NODE_ENV !== 'production') {
+      logger.info('\n======================================================')
+      logger.info('🧪 DEVELOPMENT MODE: INVITE LINK GENERATED')
+      logger.info(`🔗 ${inviteUrl}`)
+      logger.info('======================================================\n')
+    }
+
     await getResend().emails.send({
       from:    FROM,
       to,
@@ -103,7 +114,11 @@ async function sendInviteEmail({ to, storeName, role, inviteToken, inviterName, 
     logger.info(`Invite email sent to ${to}`)
   } catch (err) {
     logger.error(`Failed to send invite email to ${to}:`, err)
-    throw err
+    // We don't throw the error in development so that the frontend doesn't crash
+    // just because Resend blocked the Yopmail email address.
+    if (process.env.NODE_ENV === 'production') {
+      throw err
+    }
   }
 }
 

@@ -15,10 +15,11 @@ const InviteToken  = require('./InviteToken')
 // ── User (legacy — kept for migration) ───────────────────
 const UserSchema = new Schema(
   {
-    uid:          { type: String, required: true, unique: true, index: true },
     email:        { type: String, required: true, unique: true, lowercase: true, trim: true },
+    firebaseUid:  { type: String, unique: true, sparse: true, index: true },
     name:         { type: String, required: true, trim: true },
     phone:        { type: String, trim: true },
+    address:      { type: String, trim: true },
     role:         {
       type: String,
       enum: ['superAdmin', 'chainManager', 'branchManager', 'customer'],

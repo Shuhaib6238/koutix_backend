@@ -152,9 +152,9 @@ const generalLimiter = rateLimit({
 })
 
 const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: parseInt(process.env.AUTH_RATE_LIMIT_MAX || '10', 10),
-  message: { success: false, message: 'Too many login attempts, please try again in 15 minutes' },
+  windowMs: process.env.NODE_ENV === 'development' ? 1000 : 15 * 60 * 1000,
+  max: process.env.NODE_ENV === 'development' ? 9999 : parseInt(process.env.AUTH_RATE_LIMIT_MAX || '10', 10),
+  message: { success: false, message: 'Too many login attempts, please try again later' },
   standardHeaders: true,
   legacyHeaders: false,
 })

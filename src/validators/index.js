@@ -2,12 +2,11 @@
 // SelfPay — Zod Request Validators
 // ============================================================
 const { z } = require('zod')
+const logger = require('../config/logger')
 
 const passwordSchema = z
   .string()
   .min(8, 'Password must be at least 8 characters')
-  .regex(/[A-Z]/, 'Must contain an uppercase letter')
-  .regex(/[0-9]/, 'Must contain a number')
 
 // ── Auth: Chain Manager Register ─────────────────────────
 const chainRegisterSchema = z.object({
@@ -36,9 +35,16 @@ const branchInviteSchema = z.object({
   branchAddress: z.string().min(5).optional(),
 })
 
+const inviteUserSchema = z.object({
+  email:   z.string().email(),
+  name:    z.string().min(2).max(100),
+  phone:   z.string().min(7).max(20).optional(),
+  address: z.string().min(5).optional(),
+})
+
 // ── Auth: Branch Activate ────────────────────────────────
 const branchActivateSchema = z.object({
-  token:    z.string().uuid(),
+  token:    z.string().min(10),
   password: passwordSchema,
   name:     z.string().min(2).max(80),
   phone:    z.string().min(7).max(20),
@@ -149,6 +155,7 @@ function validate(schema) {
         field:   e.path.join('.'),
         message: e.message,
       }))
+      logger.warn(`Validation failed for ${req.method} ${req.path}:`, errors)
       return res.status(400).json({ success: false, message: 'Validation failed', errors })
     }
     req.body = result.data
@@ -168,6 +175,7 @@ module.exports = {
   // Store schemas
   createStoreSchema,
   paymentGatewaySchema,
+  inviteUserSchema,
   // Product schemas
   createProductSchema,
   adjustStockSchema,

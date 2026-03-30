@@ -39,10 +39,21 @@ app.use(helmet({
   },
 }))
 
+const allowedOrigins = ['http://localhost:3000', 'http://localhost:3001', 'http://127.0.0.1:3000', 'http://127.0.0.1:3001']
+if (process.env.WEB_URL) {
+  allowedOrigins.push(process.env.WEB_URL)
+}
+
 app.use(cors({
-  origin: process.env.NODE_ENV === 'production'
-    ? [process.env.WEB_URL, process.env.APP_URL, 'https://selfpay.com']
-    : ['http://localhost:3000', 'http://localhost:3001'],
+  origin: (origin, callback) => {
+    if (!origin) {
+      return callback(null, true)
+    }
+    if (allowedOrigins.indexOf(origin) !== -1 || process.env.NODE_ENV !== 'production') {
+      return callback(null, true)
+    }
+    callback(new Error('Not allowed by CORS'))
+  },
   credentials: true,
   methods:     ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Webhook-Signature'],

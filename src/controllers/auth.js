@@ -111,7 +111,7 @@ async function inviteBranch(req, res, next) {
     }
 
     // Create token
-    const token = crypto.randomUUID()
+    const token = crypto.randomBytes(32).toString('hex')
     const expiresAt = new Date(Date.now() + 72 * 60 * 60 * 1000)
 
     await InviteToken.create({
