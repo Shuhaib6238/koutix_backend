@@ -12,9 +12,22 @@ const {
 } = require('../middleware')
 const { validate, createStoreSchema, paymentGatewaySchema, inviteUserSchema } = require('../validators')
 const storeCtrl = require('../controllers/stores')
+const { BranchManager } = require('../models')
+const { success } = require('../utils')
 
 const router = Router()
 router.use(authenticate)
+
+// GET /stores/my-branches — chain manager's activated & invited branches
+router.get('/my-branches', requireChainManager, async (req, res, next) => {
+  try {
+    const branches = await BranchManager.find({ chainId: req.user._id })
+      .sort({ isActive: -1, createdAt: -1 })
+      .lean()
+
+    return success(res, branches)
+  } catch (err) { next(err) }
+})
 
 router.get('/',     storeCtrl.getStores)
 router.post('/',    requireChainManager, validate(createStoreSchema), storeCtrl.createStore)

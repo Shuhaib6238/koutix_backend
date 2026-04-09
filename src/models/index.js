@@ -11,6 +11,7 @@ const BranchManager = require('./BranchManager')
 const StoreManager = require('./StoreManager')
 const Customer     = require('./Customer')
 const InviteToken  = require('./InviteToken')
+const PosEvent     = require('./PosEvent')
 
 // ── User (legacy — kept for migration) ───────────────────
 const UserSchema = new Schema(
@@ -117,6 +118,17 @@ const StoreSchema = new Schema(
     },
     posCredentialsEncrypted: String,
     lastPosSyncAt:           Date,
+    posConnection: {
+      posType:              { type: String, enum: ['ls_retail', 'sap', 'custom', null], default: null },
+      method:               { type: String, enum: ['api_pull', 'webhook', null], default: null },
+      status:               { type: String, enum: ['disconnected', 'connected', 'error'], default: 'disconnected' },
+      encryptedCredentials: { type: String, default: null },
+      webhookSecret:        { type: String, default: null },
+      pullIntervalSeconds:  { type: Number, default: 300 },
+      lastSyncAt:           { type: Date, default: null },
+      lastSyncStatus:       { type: String, enum: ['success', 'fail', null], default: null },
+      lastErrorMessage:     { type: String, default: null },
+    },
     totalOrders:             { type: Number, default: 0 },
     totalRevenue:            { type: Number, default: 0 },
   },
@@ -245,4 +257,6 @@ module.exports = {
   SuperAdmin, ChainManager, BranchManager, StoreManager, Customer, InviteToken,
   // Legacy + shared models
   User, Chain, Store, Product, Order, Promotion,
+  // POS
+  PosEvent,
 }

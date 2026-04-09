@@ -3,6 +3,7 @@
 // ============================================================
 const { Worker } = require('bullmq')
 const { getRedis } = require('../config/redis')
+const { createPosPullWorker, initializePosPullJobs } = require('./posPull.job')
 const logger = require('../config/logger')
 
 // ── POS Sync Worker ───────────────────────────────────────
@@ -154,18 +155,26 @@ function startWorkers() {
   const posSyncWorker   = createPosSyncWorker()
   const notifWorker     = createNotificationWorker()
   const receiptWorker   = createReceiptWorker()
+  const posPullWorker   = createPosPullWorker()
 
   const handleError = (name) => (err) => logger.error(`[Worker:${name}] Error:`, err)
 
   posSyncWorker.on('failed',   (job, err) => logger.error(`[POS Sync] Job ${job?.id} failed:`, err))
   notifWorker.on('failed',     (job, err) => logger.error(`[Notification] Job ${job?.id} failed:`, err))
   receiptWorker.on('failed',   (job, err) => logger.error(`[Receipt] Job ${job?.id} failed:`, err))
+  posPullWorker.on('failed',   (job, err) => logger.error(`[POS Pull] Job ${job?.id} failed:`, err))
 
   posSyncWorker.on('error',  handleError('pos-sync'))
   notifWorker.on('error',    handleError('notifications'))
   receiptWorker.on('error',  handleError('receipts'))
+  posPullWorker.on('error',  handleError('pos-pull'))
 
-  logger.info('✅ BullMQ workers started (pos-sync, notifications, receipts)')
+  // Initialize repeating POS pull jobs for connected branches
+  initializePosPullJobs().catch((err) => {
+    logger.error('[Workers] Failed to initialize POS pull jobs:', err)
+  })
+
+  logger.info('✅ BullMQ workers started (pos-sync, notifications, receipts, pos-pull)')
 }
 
 module.exports = { startWorkers }

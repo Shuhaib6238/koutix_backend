@@ -22,7 +22,9 @@ const orderRoutes     = require('./routes/orders')
 const promotionRoutes = require('./routes/promotions')
 const adminRoutes     = require('./routes/admin')
 const posRoutes       = require('./routes/pos')
+const posConnectionRoutes = require('./routes/posConnection')
 const userRoutes      = require('./routes/users')
+const statsRoutes     = require('./routes/stats')
 const webhookRoutes   = require('./routes/webhooks')
 
 const app = express()
@@ -56,7 +58,7 @@ app.use(cors({
   },
   credentials: true,
   methods:     ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Webhook-Signature'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Webhook-Signature', 'X-Webhook-Secret'],
 }))
 
 // ── Webhooks MUST use raw body (before express.json) ──────
@@ -106,6 +108,8 @@ app.use(`${API}/orders`,      orderRoutes)
 app.use(`${API}/promotions`,  promotionRoutes)
 app.use(`${API}/admin`,       adminRoutes)
 app.use(`${API}/pos`,         posRoutes)
+app.use(`${API}/stats`,       statsRoutes)
+app.use('/api/pos',            posConnectionRoutes)
 app.use(`${API}/users`,       userRoutes)
 
 // Chain-scoped user routes
