@@ -7,27 +7,21 @@ const {
   requireSuperAdmin,
   requireChainManager,
   requireBranchManager,
+  requireBranchManagerOnly,
   requireAnyStaff,
   canAccessStore,
 } = require('../middleware')
 const { validate, createStoreSchema, paymentGatewaySchema, inviteUserSchema } = require('../validators')
 const storeCtrl = require('../controllers/stores')
-const { BranchManager } = require('../models')
-const { success } = require('../utils')
 
 const router = Router()
 router.use(authenticate)
 
 // GET /stores/my-branches — chain manager's activated & invited branches
-router.get('/my-branches', requireChainManager, async (req, res, next) => {
-  try {
-    const branches = await BranchManager.find({ chainId: req.user._id })
-      .sort({ isActive: -1, createdAt: -1 })
-      .lean()
+router.get('/my-branches', requireChainManager, storeCtrl.getChainBranches)
 
-    return success(res, branches)
-  } catch (err) { next(err) }
-})
+// GET /stores/branch-sales — detailed sales Breakdown for chain managers
+router.get('/branch-sales', requireChainManager, storeCtrl.getBranchSales)
 
 router.get('/',     storeCtrl.getStores)
 router.post('/',    requireChainManager, validate(createStoreSchema), storeCtrl.createStore)
@@ -41,8 +35,8 @@ router.put('/:storeId/payment-gateway',
 )
 router.get('/:storeId/stats',       canAccessStore, storeCtrl.getStoreStats)
 router.post('/:storeId/invite',     canAccessStore, requireChainManager, validate(inviteUserSchema), storeCtrl.inviteManager)
-router.get('/:storeId/pos/status',  canAccessStore, storeCtrl.getPosStatus)
-router.post('/:storeId/pos/sync',   canAccessStore, requireBranchManager, storeCtrl.triggerPosSync)
+router.get('/:storeId/pos/status',  canAccessStore, requireBranchManagerOnly, storeCtrl.getPosStatus)
+router.post('/:storeId/pos/sync',   canAccessStore, requireBranchManagerOnly, storeCtrl.triggerPosSync)
 
 // superAdmin only
 router.patch('/:id/approve',  requireSuperAdmin, storeCtrl.approveStore)

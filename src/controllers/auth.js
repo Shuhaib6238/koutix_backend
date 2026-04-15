@@ -4,7 +4,7 @@
 const crypto = require('crypto')
 const Stripe = require('stripe')
 const { admin, setUserClaims, deleteFirebaseUser, revokeUserTokens } = require('../config/firebase')
-const { ChainManager, BranchManager, StoreManager, Customer, InviteToken } = require('../models')
+const { ChainManager, BranchManager, StoreManager, Customer, InviteToken, Store } = require('../models')
 const { sendInviteEmail } = require('../services/notification/email')
 const { resolvePriceId } = require('../utils/stripe')
 const logger = require('../config/logger')
@@ -185,9 +185,25 @@ async function activateBranch(req, res, next) {
     })
     firebaseUid = fbUser.uid
 
+    // 4. Ensure Store exists
+    let store = await Store.findOne({ email: invite.email, chainId: invite.chainId })
+    if (!store) {
+      store = await Store.create({
+        name:    branchManager.branchName,
+        email:   invite.email,
+        phone:   phone || branchManager.phone,
+        address: { street: branchManager.branchAddress, city: 'City', country: 'Country' },
+        chainId: invite.chainId,
+        status:  'active', // Auto-activate store when branch manager activates
+        managerId: branchManager._id
+      })
+    }
+
+    // 5. Update claims with storeId
     await setUserClaims(firebaseUid, {
       role: 'branch_manager',
       chainId: invite.chainId.toString(),
+      storeId: store._id.toString()
     })
 
     branchManager.firebaseUid = firebaseUid
@@ -195,6 +211,7 @@ async function activateBranch(req, res, next) {
     branchManager.phone = phone
     branchManager.isActive = true
     branchManager.activatedAt = new Date()
+    branchManager.storeId = store._id
     await branchManager.save()
 
     await ChainManager.findByIdAndUpdate(invite.chainId, {
@@ -482,6 +499,46 @@ async function customerLogout(req, res, next) {
   }
 }
 
+// ══════════════════════════════════════════════════════════
+// [13] PATCH /api/auth/me
+// ══════════════════════════════════════════════════════════
+async function updateProfile(req, res, next) {
+  try {
+    const role = req.userRole
+    const userId = req.user._id
+    let Model, allowed
+
+    if (role === 'chain_manager') {
+      Model = ChainManager
+      allowed = ['businessName', 'phone']
+    } else if (role === 'branch_manager') {
+      Model = BranchManager
+      allowed = ['name', 'phone']
+    } else if (role === 'store_manager') {
+      const { StoreManager } = require('../models')
+      Model = StoreManager
+      allowed = ['name', 'phone', 'storeName', 'storeAddress']
+    } else {
+      return res.status(400).json({ success: false, message: 'Profile update not supported for this role' })
+    }
+
+    const updates = {}
+    allowed.forEach(function(k) {
+      if (req.body[k] !== undefined && req.body[k] !== '') {
+        updates[k] = req.body[k]
+      }
+    })
+
+    if (!Object.keys(updates).length) {
+      return res.status(400).json({ success: false, message: 'No valid fields provided' })
+    }
+
+    const updated = await Model.findByIdAndUpdate(userId, updates, { new: true, runValidators: true })
+    logger.info(`Profile updated: ${req.user.email}`)
+    return res.status(200).json({ success: true, data: { user: updated }, message: 'Profile updated successfully' })
+  } catch (err) { next(err) }
+}
+
 module.exports = {
   registerChain,
   inviteBranch,
@@ -495,5 +552,6 @@ module.exports = {
   getSubscription,
   changePlan,
   customerLogout,
+  updateProfile,
 }
 

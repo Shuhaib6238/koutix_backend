@@ -3,7 +3,7 @@
 // ============================================================
 const rateLimit = require('express-rate-limit')
 const { admin, verifyIdToken } = require('../config/firebase')
-const { SuperAdmin, ChainManager, BranchManager, StoreManager, Customer, Store } = require('../models')
+const { SuperAdmin, ChainManager, BranchManager, StoreManager, Customer, Store, AdminLog } = require('../models')
 const logger = require('../config/logger')
 
 // ── Model lookup by role ─────────────────────────────────
@@ -76,12 +76,13 @@ function requireRole(...roles) {
   }
 }
 
-const requireSuperAdmin    = requireRole('superadmin')
-const requireChainManager  = requireRole('superadmin', 'chain_manager')
-const requireBranchManager = requireRole('superadmin', 'chain_manager', 'branch_manager')
-const requireStoreManager  = requireRole('superadmin', 'store_manager')
-const requireAnyStaff      = requireRole('superadmin', 'chain_manager', 'branch_manager', 'store_manager')
-const requireCustomer      = requireRole('customer')
+const requireSuperAdmin        = requireRole('superadmin')
+const requireChainManager      = requireRole('superadmin', 'chain_manager')
+const requireBranchManager     = requireRole('superadmin', 'chain_manager', 'branch_manager')
+const requireBranchManagerOnly = requireRole('superadmin', 'branch_manager')
+const requireStoreManager      = requireRole('superadmin', 'store_manager')
+const requireAnyStaff          = requireRole('superadmin', 'chain_manager', 'branch_manager', 'store_manager')
+const requireCustomer          = requireRole('customer')
 
 // ── IDOR: store access ────────────────────────────────────
 async function canAccessStore(req, res, next) {
@@ -201,6 +202,69 @@ function errorHandler(err, _req, res, _next) {
   })
 }
 
+// ── Admin Action Logger ──────────────────────────────────
+function logAdminAction(action) {
+  return (req, res, next) => {
+    const originalJson = res.json
+    res.json = function(body) {
+      res.json = originalJson
+
+      // Only log if successful (2xx)
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        AdminLog.create({
+          type: 'action',
+          actorId: req.user?._id,
+          actorEmail: req.user?.email || req.user?.name,
+          action,
+          target: req.params.id || req.params.storeId || req.body.storeId || 'system',
+          meta: {
+            params: req.params,
+            body: req.body,
+            query: req.query,
+          },
+          ip: req.ip,
+        }).catch((err) => logger.error('Error creating AdminLog:', err))
+      }
+
+      return originalJson.call(this, body)
+    }
+    next()
+  }
+}
+
+// ── Socket Auth Middleware ────────────────────────────────
+async function socketAuthMiddleware(socket, next) {
+  try {
+    const cookieString = socket.handshake.headers.cookie
+    if (!cookieString) {
+      return next(new Error('Authentication error: No cookies'))
+    }
+
+    // Parse manual to avoid extra deps
+    const match = cookieString.match(new RegExp('(^| )session=([^;]+)'))
+    const sessionCookie = match ? match[2] : null
+
+    if (!sessionCookie) {
+      return next(new Error('Authentication error: No session cookie'))
+    }
+
+    const decoded = await admin.auth().verifySessionCookie(sessionCookie, true).catch(() => null)
+    if (!decoded || decoded.role !== 'superadmin') {
+      return next(new Error('Authentication error: Insufficient permissions'))
+    }
+
+    const user = await SuperAdmin.findOne({ firebaseUid: decoded.uid, isActive: true })
+    if (!user) {
+      return next(new Error('Authentication error: User not found'))
+    }
+
+    socket.user = user
+    next()
+  } catch (err) {
+    next(new Error(`Authentication error: ${err.message}`))
+  }
+}
+
 // ── 404 Handler ───────────────────────────────────────────
 function notFound(req, res) {
   res.status(404).json({
@@ -224,6 +288,7 @@ module.exports = {
   requireSuperAdmin,
   requireChainManager,
   requireBranchManager,
+  requireBranchManagerOnly,
   requireStoreManager,
   requireAnyStaff,
   requireCustomer,
@@ -235,4 +300,6 @@ module.exports = {
   errorHandler,
   notFound,
   AppError,
+  logAdminAction,
+  socketAuthMiddleware,
 }

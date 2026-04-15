@@ -2,15 +2,34 @@
 // KOUTIX — Server Entry Point
 // ============================================================
 require('dotenv').config()
+const { createServer } = require('http')
+const { Server }       = require('socket.io')
 
 const app                          = require('./app')
 const { connectDB }                = require('./config/database')
 const { connectRedis, disconnectRedis } = require('./config/redis')
 const { initFirebaseAdmin }        = require('./config/firebase')
-const { startWorkers }             = require('./jobs/workers')
+const { socketAuthMiddleware }     = require('./middleware')
 const logger                       = require('./config/logger')
 
 const PORT = parseInt(process.env.PORT || '5000', 10)
+
+const httpServer = createServer(app)
+const io = new Server(httpServer, {
+  cors: {
+    origin:      process.env.WEB_URL || '*',
+    credentials: true,
+  },
+})
+
+// Namespace: /admin — require superadmin cookie auth in handshake
+io.of('/admin').use(socketAuthMiddleware).on('connection', (socket) => {
+  socket.join('superadmin-room')
+  logger.info(`Admin joined room: ${socket.user.email}`)
+})
+
+// Export io for use in controllers
+module.exports.io = io
 
 async function bootstrap() {
   try {
@@ -21,14 +40,14 @@ async function bootstrap() {
     // startWorkers()
 
     // Start HTTP server
-    const server = app.listen(PORT, () => {
+    httpServer.listen(PORT, () => {
       logger.info(`🚀 KOUTIX API running on port ${PORT} [${process.env.NODE_ENV}]`)
     })
 
     // ── Graceful shutdown ────────────────────────────────
-    const shutdown = async (signal) => {
+    const shutdown = (signal) => {
       logger.info(`${signal} received — shutting down gracefully`)
-      server.close(async () => {
+      httpServer.close(async () => {
         await disconnectRedis()
         logger.info('Server closed')
         process.exit(0)

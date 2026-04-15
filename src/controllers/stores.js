@@ -10,6 +10,87 @@ const { cache } = require('../config/redis')
 const logger = require('../config/logger')
 const crypto = require('crypto')
 
+// ── GET /stores/my-branches ──────────────────────────────
+async function getChainBranches(req, res, next) {
+  try {
+    const chainId = req.user._id
+
+    // 1. Get invited managers
+    const invited = await BranchManager.find({ chainId }).sort({ isActive: -1, createdAt: -1 }).lean()
+
+    // 2. Get actual store records (no POS or payment config for chain manager)
+    const stores = await Store.find({ chainId }).select('-gatewayConfig -posConnector -posCredentialsEncrypted -lastPosSyncAt -posConnection').lean()
+
+    // 3. Merge or return combined list
+    // We'll return everything the chain manager needs
+    return success(res, { invited, stores })
+  } catch (err) { next(err) }
+}
+
+// ── GET /stores/branch-sales ─────────────────────────────
+async function getBranchSales(req, res, next) {
+  try {
+    const chainId = req.user._id
+    
+    // 1. Get all stores for this chain
+    const stores = await Store.find({ chainId }).select('name address totalRevenue totalOrders status managerId').lean()
+    
+    // 2. Get all invited managers for this chain to show gaps
+    const invited = await BranchManager.find({ chainId }).lean()
+    
+    // Today's starts for aggregation
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+
+    const branchStats = await Promise.all(stores.map(async (s) => {
+      const todayStats = await Order.aggregate([
+        { $match: { storeId: s._id, status: { $in: ['paid', 'completed'] }, createdAt: { $gte: today } } },
+        { $group: { _id: null, total: { $sum: '$total' }, count: { $sum: 1 } } }
+      ])
+      
+      const lastOrder = await Order.findOne({ storeId: s._id }).sort({ createdAt: -1 })
+      
+      // Find the manager details from BranchManager if active
+      const mgr = invited.find(i => i.email === s.email) || {}
+
+      return {
+        _id: s._id,
+        name: s.name,
+        address: s.address,
+        status: s.status,
+        totalRevenue: s.totalRevenue || 0,
+        totalOrders: s.totalOrders || 0,
+        todayRevenue: todayStats[0]?.total || 0,
+        todayOrders: todayStats[0]?.count || 0,
+        lastOrderAt: lastOrder?.createdAt || null,
+        managerName: mgr.name || 'Branch Manager',
+        managerEmail: s.email
+      }
+    }))
+
+    // 3. Add invited-only branches that don't have stores yet
+    invited.forEach(i => {
+      const hasStore = stores.some(s => s.email === i.email)
+      if (!hasStore) {
+        branchStats.push({
+          name: i.branchName,
+          address: i.branchAddress,
+          status: i.isActive ? 'active' : 'invited',
+          totalRevenue: 0,
+          totalOrders: 0,
+          todayRevenue: 0,
+          todayOrders: 0,
+          managerName: i.name,
+          managerEmail: i.email,
+          isPending: true
+        })
+      }
+    })
+
+    return success(res, branchStats)
+  } catch (err) { next(err) }
+}
+
 // ── GET /stores ──────────────────────────────────────────
 async function getStores(req, res, next) {
   try {
@@ -59,10 +140,10 @@ async function createStore(req, res, next) {
 
     const store = await Store.create({
       name, email, phone,
-      address: { street: address, city, country },
+      address: { street: address, city: city || 'City', country: country || 'Country' },
       primaryColor, currency, vatRate, posConnector,
-      chainId: user.role === 'chain_manager' ? user.chainId : undefined,
-      status:  user.role === 'superadmin' ? 'active' : 'pending_approval',
+      chainId: req.userRole === 'chain_manager' ? req.user._id : undefined,
+      status:  req.userRole === 'superadmin' ? 'active' : 'pending_approval',
     })
 
     logger.info(`Store created: ${name} by ${user.email}`)
@@ -196,6 +277,7 @@ async function inviteManager(req, res, next) {
       {
         email,
         chainId,
+        storeId,
         name,
         phone,
         branchName:    store.name,
@@ -315,4 +397,5 @@ module.exports = {
   updatePaymentGateway, getStoreStats, inviteManager,
   getPosStatus, triggerPosSync,
   approveStore, rejectStore, suspendStore,
+  getChainBranches, getBranchSales
 }

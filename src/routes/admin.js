@@ -3,20 +3,45 @@
 // ============================================================
 const { Router } = require('express')
 const { authenticate, requireSuperAdmin, requireChainManager } = require('../middleware')
+const { validate } = require('../validators')
+const { updateUserRoleSchema, rejectStoreSchema } = require('../validators/admin.validators')
 const adminCtrl = require('../controllers/admin')
 
 const router = Router()
 router.use(authenticate)
 
-router.get('/stats',                  requireSuperAdmin,   adminCtrl.getPlatformStats)
-router.get('/analytics/revenue',      requireChainManager, adminCtrl.getRevenueSeries)
-router.get('/analytics/top-stores',   requireChainManager, adminCtrl.getTopStores)
+// ── Stats & Analytics ──────────────────────────────────────
+router.get('/stats', requireSuperAdmin, adminCtrl.getPlatformStats)
+router.get('/analytics/revenue', requireChainManager, adminCtrl.getRevenueSeries)
+router.get('/analytics/top-stores', requireChainManager, adminCtrl.getTopStores)
 
-router.get('/users',                  requireSuperAdmin,   adminCtrl.getAllUsers)
-router.patch('/users/:id/role',       requireSuperAdmin,   adminCtrl.updateUserRole)
-router.patch('/users/:id/deactivate', requireSuperAdmin,   adminCtrl.deactivateUser)
+// ── Users ──────────────────────────────────────────────────
+router.get('/users', requireSuperAdmin, adminCtrl.getAllUsers)
+router.patch(
+  '/users/:id/role',
+  requireSuperAdmin,
+  validate(updateUserRoleSchema),
+  adminCtrl.updateUserRole
+)
+router.patch('/users/:id/deactivate', requireSuperAdmin, adminCtrl.deactivateUser)
 
-router.get('/chains',                 requireSuperAdmin,   adminCtrl.getAllChains)
-router.get('/stores/pending',         requireSuperAdmin,   adminCtrl.getPendingStores)
+// ── Stores ─────────────────────────────────────────────────
+router.get('/stores', requireSuperAdmin, adminCtrl.getAllStores)
+router.get('/stores/pending', requireSuperAdmin, adminCtrl.getPendingStores)
+router.patch('/stores/:id/approve', requireSuperAdmin, adminCtrl.approveStore)
+router.patch(
+  '/stores/:id/reject',
+  requireSuperAdmin,
+  validate(rejectStoreSchema),
+  adminCtrl.rejectStore
+)
+router.patch('/stores/:id/suspend', requireSuperAdmin, adminCtrl.suspendStore)
+
+// ── Orders ─────────────────────────────────────────────────
+router.get('/orders', requireSuperAdmin, adminCtrl.getAllOrders)
+
+// ── Chains & Entities ──────────────────────────────────────
+router.get('/chains', requireSuperAdmin, adminCtrl.getAllChains)
+router.get('/entities', requireSuperAdmin, adminCtrl.getAdminEntities)
 
 module.exports = router

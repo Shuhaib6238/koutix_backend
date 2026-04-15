@@ -14,6 +14,7 @@ const BranchManagerSchema = new Schema(
     chainId:       { type: Schema.Types.ObjectId, ref: 'ChainManager', required: true, index: true },
     branchName:    { type: String, required: true, trim: true },
     branchAddress: { type: String, trim: true },
+    storeId:       { type: Schema.Types.ObjectId, ref: 'Store' },
     isActive:      { type: Boolean, default: false },
     activatedAt:   Date,
   },

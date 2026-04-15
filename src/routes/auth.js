@@ -19,6 +19,7 @@ router.post('/branch/invite', authenticate, requireRole('chain_manager'), valida
 
 // ── Protected: any authenticated web role ─────────────────
 router.get('/me',     authenticate, authCtrl.getMe)
+router.patch('/me',   authenticate, authCtrl.updateProfile)
 router.post('/logout', authenticate, authCtrl.webLogout)
 
 // ── Subscription management ──────────────────────────────
