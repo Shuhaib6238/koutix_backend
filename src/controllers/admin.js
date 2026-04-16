@@ -192,6 +192,64 @@ async function getAdminEntities(req, res, next) {
   }
 }
 
+// ── DEVELOPMENT: Seed Test Data ──────────────────────────
+async function seedTestData(req, res, next) {
+  if (process.env.NODE_ENV === 'production') {
+    return error(res, 'Seeding not allowed in production', 403)
+  }
+
+  try {
+    const testStores = [
+      {
+        name: 'Lumina Lifestyle — SoHo',
+        email: 'store1@lumina.local',
+        status: 'active',
+        address: { street: '451 Spring St', city: 'New York', country: 'USA', postalCode: '10013' },
+        phone: '+1-212-555-0123',
+        currency: 'USD',
+        vatRate: 8.875,
+        totalOrders: 342,
+        totalRevenue: 125400,
+      },
+      {
+        name: 'Urban Market — Brooklyn',
+        email: 'store2@urbanmarket.local',
+        status: 'pending_approval',
+        address: { street: '200 Atlantic Ave', city: 'Brooklyn', country: 'USA', postalCode: '11201' },
+        phone: '+1-718-555-0456',
+        currency: 'USD',
+        vatRate: 8.875,
+        totalOrders: 0,
+        totalRevenue: 0,
+      },
+      {
+        name: 'Premium Goods — Miami',
+        email: 'store3@premium.local',
+        status: 'active',
+        address: { street: '123 Biscayne Blvd', city: 'Miami', country: 'USA', postalCode: '33132' },
+        phone: '+1-305-555-0789',
+        currency: 'USD',
+        vatRate: 7.0,
+        totalOrders: 156,
+        totalRevenue: 87650,
+      },
+    ]
+
+    // Remove existing test stores
+    await Store.deleteMany({ email: { $in: testStores.map(s => s.email) } })
+
+    // Create new test stores
+    const created = await Store.insertMany(testStores)
+
+    return success(res, {
+      message: `✅ Seeded ${created.length} test stores`,
+      stores: created,
+    })
+  } catch (err) {
+    next(err)
+  }
+}
+
 module.exports = {
   getPlatformStats,
   getRevenueSeries,
@@ -207,4 +265,5 @@ module.exports = {
   getAllOrders,
   getAllChains,
   getAdminEntities,
+  seedTestData,
 }

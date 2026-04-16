@@ -5,7 +5,7 @@ const admin = require('firebase-admin')
 const logger = require('./logger')
 
 function initFirebaseAdmin() {
-  if (admin.apps.length > 0) return // Already initialized
+  if (admin.apps.length > 0) { return } // Already initialized
 
   try {
     let serviceAccount
@@ -48,7 +48,7 @@ async function deleteFirebaseUser(uid) {
 }
 
 async function verifyIdToken(token) {
-  return admin.auth().verifyIdToken(token)
+  return await admin.auth().verifyIdToken(token)
 }
 
 // ── FCM Push Notifications ───────────────────────────────
@@ -67,7 +67,7 @@ async function sendPushNotification({ token, title, body, data = {} }) {
 }
 
 async function sendMulticastNotification({ tokens, title, body, data = {} }) {
-  if (!tokens.length) return
+  if (!tokens.length) { return }
   try {
     const chunks = []
     for (let i = 0; i < tokens.length; i += 500) {

@@ -34,7 +34,7 @@ async function syncOdoo(credentials, storeId, onProgress) {
   })
 
   const uid = authResp.data?.result
-  if (!uid) throw new Error('Odoo authentication failed')
+  if (!uid) {throw new Error('Odoo authentication failed')}
 
   log.push(`Authenticated as UID ${uid}`)
   await onProgress(15, log)

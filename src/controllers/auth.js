@@ -54,8 +54,8 @@ async function registerChain(req, res, next) {
       mode: 'subscription',
       line_items: [{ price: priceId, quantity: 1 }],
       subscription_data: { trial_period_days: 14 },
-      success_url: `${WEB_URL}/dashboard?checkout=success`,
-      cancel_url: `${WEB_URL}/register?checkout=cancelled`,
+      success_url: `${WEB_URL}/login?checkout=success`,
+      cancel_url: `${WEB_URL}/configure?checkout=cancelled`,
       metadata: {
         firebaseUid,
         userType: 'chain_manager',
@@ -264,8 +264,8 @@ async function registerStore(req, res, next) {
       mode: 'subscription',
       line_items: [{ price: priceId, quantity: 1 }],
       subscription_data: { trial_period_days: 14 },
-      success_url: `${WEB_URL}/dashboard?checkout=success`,
-      cancel_url: `${WEB_URL}/register?checkout=cancelled`,
+      success_url: `${WEB_URL}/login?checkout=success`,
+      cancel_url: `${WEB_URL}/configure?checkout=cancelled`,
       metadata: {
         firebaseUid,
         userType: 'store_manager',
@@ -319,7 +319,7 @@ async function webLogin(req, res, next) {
     res.cookie('session', sessionCookie, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
+      sameSite: process.env.NODE_ENV === 'production' ? 'strict' : 'lax',
       maxAge: expiresIn,
     })
 

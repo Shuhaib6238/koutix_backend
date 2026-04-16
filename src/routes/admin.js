@@ -8,6 +8,12 @@ const { updateUserRoleSchema, rejectStoreSchema } = require('../validators/admin
 const adminCtrl = require('../controllers/admin')
 
 const router = Router()
+
+// ── Development: Seed Test Data (no auth required) ─────────
+if (process.env.NODE_ENV !== 'production') {
+  router.post('/seed-test-data', adminCtrl.seedTestData)
+}
+
 router.use(authenticate)
 
 // ── Stats & Analytics ──────────────────────────────────────
