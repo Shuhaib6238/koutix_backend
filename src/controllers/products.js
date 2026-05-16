@@ -36,16 +36,28 @@ async function getProduct(req, res, next) {
 
 async function getProductByBarcode(req, res, next) {
   try {
-    const cacheKey = `product:${req.params.storeId}:${req.params.barcode}`
+    const code = String(req.params.barcode || '').trim()
+    if (!code) return error(res, 'Barcode required', 400)
+
+    const cacheKey = `product:${req.params.storeId}:${code}`
     const cached = await cache.get(cacheKey)
     if (cached) return success(res, cached)
 
+    // POS-synced items may carry the printed code in barcode, sku, or
+    // posProductId, so match any of them.
     const product = await Product.findOne({
       storeId: req.params.storeId,
-      barcode: req.params.barcode,
       isActive: true,
+      $or: [
+        { barcode: code },
+        { sku: code },
+        { posProductId: code },
+      ],
     })
-    if (!product) return error(res, 'Product not found', 404)
+    if (!product) {
+      logger.warn(`[barcode-lookup] miss store=${req.params.storeId} code=${code}`)
+      return error(res, 'Product not found', 404)
+    }
 
     await cache.set(cacheKey, product.toJSON(), 300)
     return success(res, product)

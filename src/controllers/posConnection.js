@@ -2,7 +2,7 @@
 // KOUTIX — POS Connection Controller
 // ============================================================
 const crypto = require('crypto')
-const { Store } = require('../models')
+const { Store, Product } = require('../models')
 const PosEvent = require('../models/PosEvent')
 const { encryptObject } = require('../utils/encryption')
 const { success, error } = require('../utils')
@@ -11,26 +11,11 @@ const { receiveWebhook } = require('../services/pos/posSync.service')
 const { schedulePosPullJob, removePosPullJob } = require('../jobs/posPull.job')
 const logger = require('../config/logger')
 
-const VALID_POS_TYPES = ['ls_retail', 'sap', 'custom']
-
 // ── POST /api/pos/connect ────────────────────────────────
 async function posConnect(req, res, next) {
   try {
+    // Body is already validated by Zod middleware (posConnectSchema)
     const { posType, method, credentials, pullIntervalSeconds } = req.body
-
-    // Validate posType
-    if (!posType || !VALID_POS_TYPES.includes(posType)) {
-      return error(res, `Invalid posType. Must be one of: ${VALID_POS_TYPES.join(', ')}`, 400)
-    }
-
-    // Validate method
-    if (!method || !['api_pull', 'webhook'].includes(method)) {
-      return error(res, 'Invalid method. Must be "api_pull" or "webhook"', 400)
-    }
-
-    if (!credentials || typeof credentials !== 'object') {
-      return error(res, 'Credentials are required', 400)
-    }
 
     // Get the branch/store for this branch manager
     const store = await getManagerStore(req)
@@ -70,6 +55,8 @@ async function posConnect(req, res, next) {
     // If api_pull, schedule the BullMQ repeating job
     if (method === 'api_pull') {
       await schedulePosPullJob(store._id.toString(), pullIntervalSeconds || 300)
+      const { getPosPullQueue } = require('../jobs/posPull.job')
+      await getPosPullQueue().add('pull', { storeId: store._id.toString() })
     }
 
     // Build response
@@ -112,20 +99,60 @@ async function posStatus(req, res, next) {
 }
 
 // ── POST /api/pos/test ───────────────────────────────────
+// Tests the connection AND persists it on success (so the front-end
+// "Connect POS" button — which posts here — flips status to 'connected').
 async function posTest(req, res, next) {
   try {
-    const { posType, method, credentials } = req.body
-
-    if (!posType || !VALID_POS_TYPES.includes(posType)) {
-      return error(res, `Invalid posType. Must be one of: ${VALID_POS_TYPES.join(', ')}`, 400)
-    }
-
-    if (!method || !['api_pull', 'webhook'].includes(method)) {
-      return error(res, 'Invalid method. Must be "api_pull" or "webhook"', 400)
-    }
-
+    // Body is already validated by Zod middleware (posTestSchema)
+    const { posType, method, credentials, pullIntervalSeconds } = req.body
     const result = await testConnection({ posType, method, credentials: credentials || {} })
-    return success(res, result, result.success ? 200 : 400)
+
+    // If the test failed, return the result without persisting.
+    if (!result.success) {
+      return success(res, result, 200)
+    }
+
+    // Resolve the manager's store (skip persistence if we cannot — keep test-only behaviour).
+    const store = await getManagerStore(req)
+    if (!store) {
+      return success(res, result, 200)
+    }
+
+    // Encrypt credentials and build the full posConnection sub-doc.
+    const encryptedCredentials = encryptObject(credentials || {})
+    const webhookSecret = method === 'webhook'
+      ? crypto.randomBytes(32).toString('hex')
+      : (store.posConnection?.webhookSecret || null)
+
+    const posConnection = {
+      posType,
+      method,
+      status:               'connected',
+      encryptedCredentials,
+      webhookSecret,
+      pullIntervalSeconds:  method === 'api_pull' ? (pullIntervalSeconds || 300) : undefined,
+      lastSyncAt:           null,
+      lastSyncStatus:       null,
+      lastErrorMessage:     null,
+    }
+
+    await Store.findByIdAndUpdate(store._id, { posConnection })
+
+    if (method === 'api_pull') {
+      await schedulePosPullJob(store._id.toString(), pullIntervalSeconds || 300)
+      const { getPosPullQueue } = require('../jobs/posPull.job')
+      await getPosPullQueue().add('pull', { storeId: store._id.toString() })
+    }
+
+    // Enrich response with webhook details when applicable, mirroring posConnect.
+    const responseData = { ...result, status: 'connected', posType, method }
+    if (method === 'webhook') {
+      responseData.webhookUrl    = `${process.env.API_URL || 'http://localhost:5000'}/api/pos/webhook/${store._id}/${posType}`
+      responseData.webhookSecret = webhookSecret
+    }
+
+    logger.info(`[POS Test→Connect] Store ${store._id}: connected via ${method} (${posType})`)
+    return success(res, responseData, 200)
   } catch (err) {
     next(err)
   }
@@ -226,6 +253,148 @@ async function posEvents(req, res, next) {
   }
 }
 
+// ── POST /api/pos/sync-now ───────────────────────────────
+// Enqueues an immediate one-shot pull job for the manager's store.
+// Only meaningful for api_pull connections; webhook connections receive
+// data via push so a manual trigger doesn't apply.
+async function posSyncNow(req, res, next) {
+  try {
+    const store = await getManagerStore(req)
+    if (!store) {
+      return error(res, 'No store found for this branch manager', 404)
+    }
+
+    const pc = store.posConnection || {}
+    if (pc.status !== 'connected') {
+      return error(res, 'POS is not connected', 400)
+    }
+    if (pc.method !== 'api_pull') {
+      return error(res, 'Manual sync only applies to API-pull connections', 400)
+    }
+
+    const { getPosPullQueue } = require('../jobs/posPull.job')
+    await getPosPullQueue().add('pull', { storeId: store._id.toString() })
+
+    logger.info(`[POS Sync-Now] Store ${store._id}: manual pull queued`)
+    return success(res, { queued: true }, 200, 'Sync queued')
+  } catch (err) {
+    next(err)
+  }
+}
+
+// ── GET /api/pos/dashboard ───────────────────────────────
+// Sales + product summary for the branch manager dashboard.
+// Sales aggregates come from PosEvent (synced from POS); product
+// counts/low-stock come from the Product collection.
+async function posDashboard(req, res, next) {
+  try {
+    const store = await getManagerStore(req)
+    if (!store) {
+      return error(res, 'No store found for this branch manager', 404)
+    }
+
+    const now = new Date()
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+    const weekStart  = new Date(todayStart.getTime() - 6 * 24 * 60 * 60 * 1000)
+    const monthStart = new Date(todayStart.getTime() - 29 * 24 * 60 * 60 * 1000)
+
+    const baseMatch = { branchId: store._id, status: 'success' }
+
+    // Pipeline: { revenue, transactions, currency } over a date range.
+    // Each PosEvent.convertedPayload represents one product line on a sale,
+    // so revenue = Σ (quantitySold × unitPrice) and transactions = unique transactionIds.
+    const totalsPipeline = (sinceField, since) => ([
+      { $match: { ...baseMatch, [sinceField]: { $gte: since } } },
+      { $group: {
+          _id: null,
+          revenue:    { $sum: { $multiply: [
+            { $ifNull: ['$convertedPayload.quantitySold', 0] },
+            { $ifNull: ['$convertedPayload.unitPrice',    0] },
+          ] } },
+          txnIds:     { $addToSet: '$convertedPayload.transactionId' },
+          currencies: { $addToSet: '$convertedPayload.currency' },
+      } },
+      { $project: {
+          _id: 0,
+          revenue:      { $round: ['$revenue', 2] },
+          transactions: { $size: '$txnIds' },
+          currency:     { $arrayElemAt: ['$currencies', 0] },
+      } },
+    ])
+
+    const [
+      todayAgg,
+      weekAgg,
+      topProductsAgg,
+      productCount,
+      lowStockProducts,
+      recentEvents,
+    ] = await Promise.all([
+      PosEvent.aggregate(totalsPipeline('convertedPayload.soldAt', todayStart)),
+      PosEvent.aggregate(totalsPipeline('convertedPayload.soldAt', weekStart)),
+      PosEvent.aggregate([
+        { $match: { ...baseMatch, 'convertedPayload.soldAt': { $gte: monthStart } } },
+        { $group: {
+            _id:       '$convertedPayload.productId',
+            name:      { $first: '$convertedPayload.productName' },
+            unitsSold: { $sum: { $ifNull: ['$convertedPayload.quantitySold', 0] } },
+            revenue:   { $sum: { $multiply: [
+              { $ifNull: ['$convertedPayload.quantitySold', 0] },
+              { $ifNull: ['$convertedPayload.unitPrice',    0] },
+            ] } },
+        } },
+        { $match: { _id: { $nin: [null, ''] } } },
+        { $sort: { unitsSold: -1 } },
+        { $limit: 5 },
+        { $project: {
+            _id: 0,
+            productId: '$_id',
+            name: 1,
+            unitsSold: 1,
+            revenue: { $round: ['$revenue', 2] },
+        } },
+      ]),
+      Product.countDocuments({ storeId: store._id, isActive: true }),
+      Product.find({
+        storeId: store._id,
+        isActive: true,
+        $expr: { $lte: ['$stock', '$lowStockThreshold'] },
+      })
+        .select('name sku stock lowStockThreshold')
+        .sort({ stock: 1 })
+        .limit(5)
+        .lean(),
+      PosEvent.find({ branchId: store._id })
+        .sort({ receivedAt: -1 })
+        .limit(10)
+        .lean(),
+    ])
+
+    const fallbackCurrency = store.currency || 'USD'
+    const todayTotals = todayAgg[0] || { revenue: 0, transactions: 0, currency: fallbackCurrency }
+    const weekTotals  = weekAgg[0]  || { revenue: 0, transactions: 0, currency: fallbackCurrency }
+    todayTotals.currency = todayTotals.currency || fallbackCurrency
+    weekTotals.currency  = weekTotals.currency  || fallbackCurrency
+
+    return success(res, {
+      storeId:   store._id,
+      storeName: store.name,
+      sales: {
+        today: todayTotals,
+        week:  weekTotals,
+      },
+      products: {
+        total:    productCount,
+        lowStock: lowStockProducts,
+      },
+      topProducts: topProductsAgg,
+      recentEvents,
+    })
+  } catch (err) {
+    next(err)
+  }
+}
+
 // ── Helper: get the store for the authenticated branch manager ──
 async function getManagerStore(req) {
   const user = req.user
@@ -267,4 +436,6 @@ module.exports = {
   posDisconnect,
   posWebhookReceiver,
   posEvents,
+  posDashboard,
+  posSyncNow,
 }

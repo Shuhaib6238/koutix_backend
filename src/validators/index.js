@@ -140,10 +140,45 @@ const createPromotionSchema = z
     path: ['endsAt'],
   })
 
-// ── POS ───────────────────────────────────────────────────
+// ── POS (legacy /api/v1/pos/stores/:storeId/connect) ─────
 const connectPosSchema = z.object({
   connector:   z.enum(['odoo', 'lightspeed', 'square']),
   credentials: z.record(z.string()),
+})
+
+// ── POS Connection (/api/pos/connect, /api/pos/test) ─────
+const posCredentialsSchema = z.object({
+  baseUrl:      z.string().url().optional(),
+  apiKey:       z.string().min(1).optional(),
+  username:     z.string().min(1).optional(),
+  password:     z.string().min(1).optional(),
+  sapServerUrl: z.string().url().optional(),
+  // Override the path appended to baseUrl for LS Retail sales pull (defaults to "/sales")
+  salesPath:    z.string().regex(/^\/?[\w\-./]*$/, 'Invalid path').optional(),
+}).passthrough()
+
+const posConnectSchema = z.object({
+  posType:             z.enum(['ls_retail', 'sap', 'custom']),
+  method:              z.enum(['api_pull', 'webhook']),
+  credentials:         posCredentialsSchema.default({}),
+  pullIntervalSeconds: z.number().int().min(60).max(86400).optional(),
+  storeId:             z.string().optional(),
+}).superRefine((data, ctx) => {
+  // For api_pull, baseUrl is required (we cannot pull without it)
+  if (data.method === 'api_pull' && !data.credentials?.baseUrl) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['credentials', 'baseUrl'],
+      message: 'baseUrl is required when method is "api_pull"',
+    })
+  }
+})
+
+const posTestSchema = z.object({
+  posType:             z.enum(['ls_retail', 'sap', 'custom']),
+  method:              z.enum(['api_pull', 'webhook']),
+  credentials:         posCredentialsSchema.default({}),
+  pullIntervalSeconds: z.number().int().min(60).max(86400).optional(),
 })
 
 // ── Validate middleware factory ───────────────────────────
@@ -186,4 +221,6 @@ module.exports = {
   createPromotionSchema,
   // POS schemas
   connectPosSchema,
+  posConnectSchema,
+  posTestSchema,
 }

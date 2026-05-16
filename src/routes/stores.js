@@ -25,6 +25,8 @@ router.get('/branch-sales', requireChainManager, storeCtrl.getBranchSales)
 
 router.get('/',     storeCtrl.getStores)
 router.post('/',    requireChainManager, validate(createStoreSchema), storeCtrl.createStore)
+router.get('/customer', storeCtrl.getCustomerStores)
+router.get('/nearby', storeCtrl.getNearbyStores)
 router.get('/:id',  canAccessStore, storeCtrl.getStore)
 router.patch('/:id', canAccessStore, requireAnyStaff, storeCtrl.updateStore)
 

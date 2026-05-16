@@ -114,7 +114,8 @@ async function inviteBranch(req, res, next) {
     const token = crypto.randomBytes(32).toString('hex')
     const expiresAt = new Date(Date.now() + 72 * 60 * 60 * 1000)
 
-    await InviteToken.create({
+    // Create invite token
+    const inviteToken = await InviteToken.create({
       token,
       email: branchEmail,
       chainId: chainManager._id,
@@ -135,22 +136,42 @@ async function inviteBranch(req, res, next) {
       { upsert: true, new: true }
     )
 
-    // Send invite email
+    // Send invite email directly to branch manager
     const activationUrl = `${WEB_URL}/activate?token=${token}`
-    await sendInviteEmail({
-      to: branchEmail,
-      managerName: branchName,
-      storeName: chainManager.businessName,
-      role: 'Branch Manager',
-      inviteToken: token,
-      inviterName: chainManager.businessName,
-    })
+    try {
+      await sendInviteEmail({
+        to: branchEmail,
+        managerName: branchName,
+        storeName: chainManager.businessName,
+        role: 'Branch Manager',
+        inviteToken: token,
+        inviterName: chainManager.businessName,
+      })
+      // Mark email as sent
+      await InviteToken.findByIdAndUpdate(inviteToken._id, {
+        emailSent: true,
+        emailSentAt: new Date(),
+      })
+      logger.info(`✓ Invite email sent to ${branchEmail} (branch: ${branchName}) by ${chainManager.email}`)
+    } catch (emailErr) {
+      logger.warn(`Email sending failed for ${branchEmail}, but invite created. Error: ${emailErr.message}`)
+      // Track email error for retry/monitoring
+      await InviteToken.findByIdAndUpdate(inviteToken._id, {
+        emailSent: false,
+        emailError: emailErr.message,
+      })
+    }
 
-    logger.info(`Branch invite sent: ${branchEmail} by ${chainManager.email}`)
     return res.status(200).json({
       success: true,
-      data: { activationUrl },
-      message: 'Invitation sent successfully',
+      data: {
+        activationUrl,
+        inviteId: inviteToken._id,
+        email: branchEmail,
+        branchName,
+        expiresIn: '72 hours'
+      },
+      message: 'Invitation sent to branch manager email',
     })
   } catch (err) {
     next(err)
@@ -421,6 +442,31 @@ async function customerSocial(req, res, next) {
 }
 
 // ══════════════════════════════════════════════════════════
+// [8.5] POST /api/auth/customer/profile
+// ══════════════════════════════════════════════════════════
+async function updateCustomerProfile(req, res, next) {
+  try {
+    const { name } = req.body
+    const customer = await Customer.findOneAndUpdate(
+      { firebaseUid: req.uid },
+      { name },
+      { new: true, runValidators: true }
+    )
+    if (!customer) {
+      return res.status(404).json({ success: false, message: 'Customer not found' })
+    }
+    logger.info(`Customer profile updated: ${customer.phone || customer.email}`)
+    return res.status(200).json({
+      success: true,
+      data: { user: customer },
+      message: 'Profile updated successfully',
+    })
+  } catch (err) {
+    next(err)
+  }
+}
+
+// ══════════════════════════════════════════════════════════
 // [9] GET /api/auth/me
 // ══════════════════════════════════════════════════════════
 function getMe(req, res) {
@@ -553,5 +599,6 @@ module.exports = {
   changePlan,
   customerLogout,
   updateProfile,
+  updateCustomerProfile,
 }
 

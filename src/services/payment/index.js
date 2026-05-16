@@ -16,10 +16,17 @@ async function getGatewayConfig(storeId) {
   }
 
   const { provider, secretKeyEncrypted, webhookSecretEncrypted } = store.gatewayConfig
+  if (!provider) {
+    throw new Error('Store payment gateway provider not set')
+  }
+  if (!secretKeyEncrypted) {
+    throw new Error('Store payment gateway secret key is missing — please reconfigure the gateway')
+  }
+
   return {
     provider,
     secretKey:     decrypt(secretKeyEncrypted),
-    webhookSecret: decrypt(webhookSecretEncrypted),
+    webhookSecret: webhookSecretEncrypted ? decrypt(webhookSecretEncrypted) : null,
     store,
   }
 }
@@ -27,14 +34,70 @@ async function getGatewayConfig(storeId) {
 // ── Create Payment Session ────────────────────────────────
 async function createPaymentSession({
   storeId, orderId, orderNumber,
-  amount, currency, customerName, description,
+  amount, currency, customerName, description, items,
 }) {
   const { provider, secretKey } = await getGatewayConfig(storeId)
 
   if (provider === 'stripe') {
     return createStripeSession({ secretKey, storeId, orderId, orderNumber, amount, currency, description })
   } else {
-    return createCheckoutSession({ secretKey, storeId, orderId, orderNumber, amount, currency, customerName, description })
+    return createCheckoutSession({ secretKey, storeId, orderId, orderNumber, amount, currency, customerName, description, items })
+  }
+}
+
+// ── Create PaymentIntent (for flutter_stripe Payment Sheet) ──
+async function createPaymentIntent({
+  storeId, orderId, orderNumber,
+  amount, currency, customerEmail, customerName, description,
+}) {
+  const { provider, secretKey, store } = await getGatewayConfig(storeId)
+
+  if (provider !== 'stripe') {
+    throw new Error('Payment Sheet is only supported with Stripe gateway')
+  }
+
+  const stripe = new Stripe(secretKey, { apiVersion: '2024-04-10' })
+
+  // 1. Create or retrieve Stripe Customer
+  const customers = await stripe.customers.list({ email: customerEmail, limit: 1 })
+  let customer = customers.data[0]
+  if (!customer) {
+    customer = await stripe.customers.create({
+      email: customerEmail,
+      name: customerName,
+      metadata: { source: 'koutix_customer_app' },
+    })
+  }
+
+  // 2. Create Ephemeral Key for the customer
+  const ephemeralKey = await stripe.ephemeralKeys.create(
+    { customer: customer.id },
+    { apiVersion: '2024-04-10' }
+  )
+
+  // 3. Create PaymentIntent
+  const paymentIntent = await stripe.paymentIntents.create({
+    amount: Math.round(amount * 100),
+    currency: currency.toLowerCase(),
+    customer: customer.id,
+    description,
+    metadata: {
+      orderId,
+      orderNumber,
+      storeId,
+      type: 'customer_checkout',
+    },
+    automatic_payment_methods: { enabled: true },
+  })
+
+  return {
+    paymentIntentId:    paymentIntent.id,
+    clientSecret:       paymentIntent.client_secret,
+    ephemeralKey:       ephemeralKey.secret,
+    customerId:         customer.id,
+    publishableKey:     store.gatewayConfig?.publicKeyEncrypted
+                          ? decrypt(store.gatewayConfig.publicKeyEncrypted)
+                          : process.env.STRIPE_PUBLISHABLE_KEY,
   }
 }
 
@@ -68,8 +131,15 @@ async function createStripeSession({ secretKey, storeId, orderId, orderNumber, a
 }
 
 // ── Checkout.com Session ──────────────────────────────────
-async function createCheckoutSession({ secretKey, storeId, orderId, orderNumber, amount, currency, customerName, description }) {
+async function createCheckoutSession({ secretKey, storeId, orderId, orderNumber, amount, currency, customerName, description, items }) {
   const appUrl = process.env.APP_URL || 'http://localhost:3000'
+
+  // Map Koutix items to Checkout.com products
+  const products = (items || []).map((item) => ({
+    name:     item.productName || item.name,
+    quantity: item.quantity,
+    price:    Math.round(item.price * 100),
+  }))
 
   const response = await axios.post(
     'https://api.checkout.com/payment-links',
@@ -79,6 +149,7 @@ async function createCheckoutSession({ secretKey, storeId, orderId, orderNumber,
       description,
       reference:   orderNumber,
       customer:    { name: customerName },
+      products, // Added itemized billing
       success_url: `${appUrl}/payment/success?orderId=${orderId}`,
       failure_url: `${appUrl}/payment/cancel?orderId=${orderId}`,
       metadata:    { orderId, storeId },
@@ -152,6 +223,33 @@ async function createSubscriptionCheckoutSession({ chainId, chainName, email, pl
   }
 }
 
+// ── Verify a session at the gateway (post-redirect check) ─
+async function verifyPaymentSession(storeId, sessionOrPaymentId) {
+  const { provider, secretKey } = await getGatewayConfig(storeId)
+
+  if (provider === 'stripe') {
+    const stripe = new Stripe(secretKey, { apiVersion: '2024-04-10' })
+    const session = await stripe.checkout.sessions.retrieve(sessionOrPaymentId)
+    return {
+      paid:             session.payment_status === 'paid',
+      paymentReference: session.payment_intent || session.id,
+      raw:              { status: session.payment_status },
+    }
+  }
+
+  // Checkout.com
+  const response = await axios.get(
+    `https://api.checkout.com/payments/${sessionOrPaymentId}`,
+    { headers: { Authorization: `Bearer ${secretKey}` } }
+  )
+  const status = response.data.status
+  return {
+    paid:             ['Authorized', 'Captured', 'Paid'].includes(status),
+    paymentReference: response.data.id,
+    raw:              { status },
+  }
+}
+
 // ── Refund ────────────────────────────────────────────────
 async function refundPayment(storeId, paymentReference, amount, _currency) {
   const { provider, secretKey } = await getGatewayConfig(storeId)
@@ -180,8 +278,10 @@ async function refundPayment(storeId, paymentReference, amount, _currency) {
 
 module.exports = {
   createPaymentSession,
+  createPaymentIntent,
   createSubscriptionCheckoutSession,
   verifyStripeWebhook,
   verifyCheckoutWebhook,
+  verifyPaymentSession,
   refundPayment,
 }

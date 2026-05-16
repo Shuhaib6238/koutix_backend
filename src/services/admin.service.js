@@ -1,7 +1,7 @@
 // ============================================================
 // KOUTIX — Admin Service Layer
 // ============================================================
-const { User, Chain, Store, Order, Customer } = require('../models')
+const { User, Chain, Store, Order, Customer, AuditLog } = require('../models')
 const { getPaginationParams, getDateRange } = require('../utils')
 const { cache } = require('../config/redis')
 const { setUserClaims, revokeUserTokens } = require('../config/firebase')
@@ -78,13 +78,9 @@ async function getPlatformStats() {
       prev === 0 ? 100 : parseFloat(((curr - prev) / prev * 100).toFixed(1))
 
     const stats = {
-      // ── Frontend-expected fields (MUST match exactly) ──────
       activeStores,
       users: totalUsers,
-      apiHealth: 99.9, // Static placeholder (no real monitoring yet)
       volume: parseFloat(today24hVolume.toFixed(2)),
-
-      // ── Extended growth metrics ────────────────────────────
       totalRevenue: parseFloat(currRevenue.toFixed(2)),
       revenueGrowth: pct(currRevenue, prevRevenue),
       totalOrders,
@@ -166,12 +162,31 @@ async function getTopStores({ limit = 10 }) {
       { $sort: { revenue: -1 } },
       { $limit: limit },
       {
+        $lookup: {
+          from: 'stores',
+          localField: '_id',
+          foreignField: '_id',
+          as: 'storeDetail',
+        },
+      },
+      { $unwind: { path: '$storeDetail', preserveNullAndEmptyArrays: true } },
+      {
+        $lookup: {
+          from: 'chains',
+          localField: 'storeDetail.chainId',
+          foreignField: '_id',
+          as: 'chainDetail',
+        },
+      },
+      { $unwind: { path: '$chainDetail', preserveNullAndEmptyArrays: true } },
+      {
         $project: {
           storeId: '$_id',
           storeName: 1,
-          revenue: 1,
+          revenue: { $round: ['$revenue', 2] },
           orders: 1,
-          avgOrderValue: 1,
+          avgOrderValue: { $round: ['$avgOrderValue', 2] },
+          chainName: { $ifNull: ['$chainDetail.name', 'Standalone'] },
           _id: 0,
         },
       },
@@ -192,6 +207,49 @@ async function listUsers({ page, limit, skip, sort, search, status, role }) {
   try {
     const filter = {}
 
+    // Handle chainManager role from separate collection
+    if (role === 'chainManager') {
+      const { ChainManager } = require('../models')
+      const searchFilter = {}
+
+      if (status === 'active') {
+        searchFilter.isActive = true
+      }
+      if (status === 'inactive') {
+        searchFilter.isActive = false
+      }
+      if (search) {
+        searchFilter.$or = [
+          { businessName: { $regex: search, $options: 'i' } },
+          { email: { $regex: search, $options: 'i' } }
+        ]
+      }
+
+      const [managers, total] = await Promise.all([
+        ChainManager.find(searchFilter)
+          .sort(sort)
+          .skip(skip)
+          .limit(limit)
+          .lean(),
+        ChainManager.countDocuments(searchFilter),
+      ])
+
+      // Transform ChainManager to User-like format
+      const users = managers.map(m => ({
+        _id: m._id,
+        name: m.businessName,
+        email: m.email,
+        phone: m.phone,
+        role: 'chainManager',
+        isActive: m.isActive,
+        createdAt: m.createdAt,
+        updatedAt: m.updatedAt,
+      }))
+
+      return { users, total, page, limit }
+    }
+
+    // Regular User collection filtering
     if (role) {
       filter.role = role
     }
@@ -206,7 +264,13 @@ async function listUsers({ page, limit, skip, sort, search, status, role }) {
     }
 
     const [users, total] = await Promise.all([
-      User.find(filter).sort(sort).skip(skip).limit(limit).select('-inviteToken'),
+      User.find(filter)
+        .sort(sort)
+        .skip(skip)
+        .limit(limit)
+        .populate('chainId', 'name logo')
+        .populate('storeId', 'name address')
+        .select('-inviteToken'),
       User.countDocuments(filter),
     ])
 
@@ -414,6 +478,185 @@ async function suspendStore(storeId) {
   }
 }
 
+/**
+ * List audit logs with pagination
+ */
+async function listAuditLogs({ page, limit, skip, sort, search, action }) {
+  try {
+    const filter = {}
+    if (action) {
+      filter.action = action
+    }
+    if (search) {
+      filter.$or = [
+        { userEmail: { $regex: search, $options: 'i' } },
+        { action: { $regex: search, $options: 'i' } },
+      ]
+    }
+
+    const [logs, total] = await Promise.all([
+      AuditLog.find(filter).sort(sort).skip(skip).limit(limit).populate('userId', 'name email'),
+      AuditLog.countDocuments(filter),
+    ])
+
+    return { logs, total, page, limit }
+  } catch (err) {
+    logger.error('listAuditLogs error:', err)
+    throw err
+  }
+}
+
+/**
+ * Record a new audit log entry (fire-and-forget)
+ */
+function recordActivity({ userId, userEmail, action, entityType, entityId, details, severity = 'info' }) {
+  AuditLog.create({
+    userId,
+    userEmail,
+    action,
+    entityType,
+    entityId,
+    details,
+    severity,
+  }).catch((err) => logger.error('recordActivity error:', err))
+}
+
+/**
+ * Get all chain managers with their stores and store managers
+ */
+async function getChainManagersWithBranches({ limit = 20, skip = 0, search = '' }) {
+  try {
+    const { ChainManager } = require('../models')
+    const filter = {}
+    if (search) {
+      filter.$or = [
+        { businessName: { $regex: search, $options: 'i' } },
+        { email: { $regex: search, $options: 'i' } },
+      ]
+    }
+
+    const [managers, total] = await Promise.all([
+      ChainManager.find(filter)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+      ChainManager.countDocuments(filter),
+    ])
+
+    // Get branches and store managers for each chain manager
+    const enrichedManagers = await Promise.all(
+      managers.map(async (manager) => {
+        // Get stores owned by this chain manager
+        const stores = await Store.find({ managerId: manager._id }).lean()
+
+        // Get store managers for each store
+        const storesWithManagers = await Promise.all(
+          stores.map(async (store) => {
+            const storeManagers = await User.find({ storeId: store._id, role: 'storeManager' })
+              .select('name email phone isActive createdAt')
+              .lean()
+            return {
+              _id: store._id,
+              name: store.name,
+              email: store.email,
+              phone: store.phone,
+              address: store.address,
+              status: store.status,
+              storeManagers,
+              managerCount: storeManagers.length,
+            }
+          })
+        )
+
+        return {
+          _id: manager._id,
+          name: manager.businessName,
+          email: manager.email,
+          phone: manager.phone,
+          plan: manager.plan,
+          subscriptionStatus: manager.subscriptionStatus,
+          isActive: manager.isActive,
+          createdAt: manager.createdAt,
+          stores: storesWithManagers,
+          storeCount: storesWithManagers.length,
+        }
+      })
+    )
+
+    return { managers: enrichedManagers, total }
+  } catch (err) {
+    logger.error('getChainManagersWithBranches error:', err)
+    throw err
+  }
+}
+
+/**
+ * Get single chain manager with branches and store managers
+ */
+async function getChainManagerDetail(managerId) {
+  try {
+    const manager = await User.findById(managerId)
+      .populate('chainId', 'name logo subscriptionPlan subscriptionStatus')
+      .lean()
+
+    if (!manager) {
+      throw new Error('Chain manager not found')
+    }
+
+    const chainId = manager.chainId?._id
+    const branches = chainId
+      ? await Store.find({ chainId }).lean()
+      : []
+
+    // Get store managers for each branch
+    const branchesWithManagers = await Promise.all(
+      branches.map(async (branch) => {
+        const storeManagers = await User.find({ storeId: branch._id, role: 'storeManager' })
+          .select('_id name email phone isActive createdAt')
+          .lean()
+
+        const orders = await Order.countDocuments({ storeId: branch._id })
+        const revenue = await Order.aggregate([
+          { $match: { storeId: branch._id, status: { $in: ['paid', 'completed'] } } },
+          { $group: { _id: null, total: { $sum: '$total' } } },
+        ])
+
+        return {
+          _id: branch._id,
+          name: branch.name,
+          email: branch.email,
+          phone: branch.phone,
+          address: branch.address,
+          status: branch.status,
+          storeManagers,
+          managerCount: storeManagers.length,
+          totalOrders: orders,
+          totalRevenue: revenue[0]?.total || 0,
+        }
+      })
+    )
+
+    return {
+      _id: manager._id,
+      name: manager.name,
+      email: manager.email,
+      phone: manager.phone,
+      role: manager.role,
+      isActive: manager.isActive,
+      createdAt: manager.createdAt,
+      chain: manager.chainId || null,
+      branches: branchesWithManagers,
+      branchCount: branchesWithManagers.length,
+      totalRevenue: branchesWithManagers.reduce((sum, b) => sum + b.totalRevenue, 0),
+      totalOrders: branchesWithManagers.reduce((sum, b) => sum + b.totalOrders, 0),
+    }
+  } catch (err) {
+    logger.error('getChainManagerDetail error:', err)
+    throw err
+  }
+}
+
 module.exports = {
   getPlatformStats,
   getRevenueSeries,
@@ -426,4 +669,8 @@ module.exports = {
   approveStore,
   rejectStore,
   suspendStore,
+  listAuditLogs,
+  recordActivity,
+  getChainManagersWithBranches,
+  getChainManagerDetail,
 }

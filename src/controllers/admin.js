@@ -1,7 +1,7 @@
 // ============================================================
 // KOUTIX — Admin Controller (HTTP Adapter)
 // ============================================================
-const { Chain, Store } = require('../models')
+const { Chain, Store, User, Order } = require('../models')
 const { success, successList, error, getPaginationParams } = require('../utils')
 const adminService = require('../services/admin.service')
 
@@ -110,6 +110,16 @@ async function getPendingStores(req, res, next) {
 async function approveStore(req, res, next) {
   try {
     const store = await adminService.approveStore(req.params.id)
+
+    adminService.recordActivity({
+      userId: req.user._id,
+      userEmail: req.user.email,
+      action: 'STORE_APPROVED',
+      entityType: 'Store',
+      entityId: store._id,
+      details: { storeName: store.name }
+    })
+
     return success(res, store)
   } catch (err) {
     if (err.message === 'Store not found') {
@@ -122,6 +132,16 @@ async function approveStore(req, res, next) {
 async function rejectStore(req, res, next) {
   try {
     const store = await adminService.rejectStore(req.params.id, req.body.reason)
+
+    adminService.recordActivity({
+      userId: req.user._id,
+      userEmail: req.user.email,
+      action: 'STORE_REJECTED',
+      entityType: 'Store',
+      entityId: store._id,
+      details: { storeName: store.name, reason: req.body.reason }
+    })
+
     return success(res, store)
   } catch (err) {
     if (err.message === 'Store not found') {
@@ -169,11 +189,30 @@ async function getAllOrders(req, res, next) {
 async function getAllChains(req, res, next) {
   try {
     const { page, limit, skip, sort } = getPaginationParams(req.query)
-    const [chains, total] = await Promise.all([
-      Chain.find().sort(sort).skip(skip).limit(limit).populate('branchCount'),
-      Chain.countDocuments(),
+    const chains = await Chain.find()
+      .sort(sort)
+      .skip(skip)
+      .limit(limit)
+    const total = await Chain.countDocuments()
+
+    // Enhance chains with totalRevenue from orders
+    const chainIds = chains.map(c => c._id)
+    const revenues = await Order.aggregate([
+      { $match: { status: { $in: ['paid', 'completed'] }, chainId: { $in: chainIds } } },
+      { $group: { _id: '$chainId', totalRevenue: { $sum: '$total' } } },
     ])
-    return successList(res, chains, { page, limit, total })
+
+    const revenueMap = revenues.reduce((acc, r) => {
+      acc[r._id] = r.totalRevenue
+      return acc
+    }, {})
+
+    const enrichedChains = chains.map(c => ({
+      ...c.toObject(),
+      totalRevenue: revenueMap[c._id] || 0,
+    }))
+
+    return successList(res, enrichedChains, { page, limit, total })
   } catch (err) {
     next(err)
   }
@@ -184,7 +223,7 @@ async function getAdminEntities(req, res, next) {
     const [chains, stores, users] = await Promise.all([
       Chain.countDocuments(),
       Store.countDocuments(),
-      require('../models').User.countDocuments(),
+      User.countDocuments(),
     ])
     return success(res, { chains, stores, users })
   } catch (err) {
@@ -192,60 +231,63 @@ async function getAdminEntities(req, res, next) {
   }
 }
 
-// ── DEVELOPMENT: Seed Test Data ──────────────────────────
-async function seedTestData(req, res, next) {
-  if (process.env.NODE_ENV === 'production') {
-    return error(res, 'Seeding not allowed in production', 403)
-  }
 
+// ── Audit & Health ──────────────────────────────────────────
+async function getAuditLogs(req, res, next) {
   try {
-    const testStores = [
-      {
-        name: 'Lumina Lifestyle — SoHo',
-        email: 'store1@lumina.local',
-        status: 'active',
-        address: { street: '451 Spring St', city: 'New York', country: 'USA', postalCode: '10013' },
-        phone: '+1-212-555-0123',
-        currency: 'USD',
-        vatRate: 8.875,
-        totalOrders: 342,
-        totalRevenue: 125400,
-      },
-      {
-        name: 'Urban Market — Brooklyn',
-        email: 'store2@urbanmarket.local',
-        status: 'pending_approval',
-        address: { street: '200 Atlantic Ave', city: 'Brooklyn', country: 'USA', postalCode: '11201' },
-        phone: '+1-718-555-0456',
-        currency: 'USD',
-        vatRate: 8.875,
-        totalOrders: 0,
-        totalRevenue: 0,
-      },
-      {
-        name: 'Premium Goods — Miami',
-        email: 'store3@premium.local',
-        status: 'active',
-        address: { street: '123 Biscayne Blvd', city: 'Miami', country: 'USA', postalCode: '33132' },
-        phone: '+1-305-555-0789',
-        currency: 'USD',
-        vatRate: 7.0,
-        totalOrders: 156,
-        totalRevenue: 87650,
-      },
-    ]
-
-    // Remove existing test stores
-    await Store.deleteMany({ email: { $in: testStores.map(s => s.email) } })
-
-    // Create new test stores
-    const created = await Store.insertMany(testStores)
-
-    return success(res, {
-      message: `✅ Seeded ${created.length} test stores`,
-      stores: created,
+    const { page, limit, skip, sort } = getPaginationParams(req.query)
+    const { search, action } = req.query
+    const result = await adminService.listAuditLogs({
+      page,
+      limit,
+      skip,
+      sort,
+      search,
+      action,
     })
+    return successList(res, result.logs, { page, limit, total: result.total })
   } catch (err) {
+    next(err)
+  }
+}
+
+async function getSystemHealth(req, res, next) {
+  try {
+    const health = {
+      api: { status: 'online', timestamp: new Date().toISOString() },
+      database: { status: 'online' },
+      timestamp: new Date().toISOString(),
+    }
+    return success(res, health)
+  } catch (err) {
+    next(err)
+  }
+}
+
+// ── Chain Managers with Details ────────────────────────────
+async function getChainManagersWithBranches(req, res, next) {
+  try {
+    const { page, limit, skip } = getPaginationParams(req.query)
+    const { search } = req.query
+    const result = await adminService.getChainManagersWithBranches({
+      limit,
+      skip,
+      search,
+    })
+    return successList(res, result.managers, { page, limit, total: result.total })
+  } catch (err) {
+    next(err)
+  }
+}
+
+async function getChainManagerDetail(req, res, next) {
+  try {
+    const manager = await adminService.getChainManagerDetail(req.params.id)
+    return success(res, manager)
+  } catch (err) {
+    if (err.message === 'Chain manager not found') {
+      return error(res, 'Chain manager not found', 404)
+    }
     next(err)
   }
 }
@@ -265,5 +307,8 @@ module.exports = {
   getAllOrders,
   getAllChains,
   getAdminEntities,
-  seedTestData,
+  getAuditLogs,
+  getSystemHealth,
+  getChainManagersWithBranches,
+  getChainManagerDetail,
 }

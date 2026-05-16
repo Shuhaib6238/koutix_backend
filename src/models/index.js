@@ -12,6 +12,7 @@ const StoreManager = require('./StoreManager')
 const Customer     = require('./Customer')
 const InviteToken  = require('./InviteToken')
 const PosEvent     = require('./PosEvent')
+const AuditLog     = require('./AuditLog')
 
 // ── User (legacy — kept for migration) ───────────────────
 const UserSchema = new Schema(
@@ -131,9 +132,24 @@ const StoreSchema = new Schema(
     },
     totalOrders:             { type: Number, default: 0 },
     totalRevenue:            { type: Number, default: 0 },
+    isPromoted:              { type: Boolean, default: false },
+    location: {
+      type: { type: String, enum: ['Point'], default: 'Point' },
+      coordinates: { type: [Number], index: '2dsphere' }, // [lng, lat]
+    },
   },
   { timestamps: true }
 )
+
+StoreSchema.pre('save', function(next) {
+  if (this.address && this.address.coordinates) {
+    this.location = {
+      type: 'Point',
+      coordinates: [this.address.coordinates.lng, this.address.coordinates.lat]
+    }
+  }
+  next()
+})
 
 StoreSchema.index({ chainId: 1, status: 1 })
 StoreSchema.index({ 'address.city': 1 })
@@ -259,4 +275,5 @@ module.exports = {
   User, Chain, Store, Product, Order, Promotion,
   // POS
   PosEvent,
+  AuditLog,
 }

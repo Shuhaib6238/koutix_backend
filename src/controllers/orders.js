@@ -4,7 +4,7 @@
 const mongoose = require('mongoose')
 const QRCode = require('qrcode')
 const { Order, Product, Store, User } = require('../models')
-const { createPaymentSession, refundPayment } = require('../services/payment')
+const { createPaymentSession, createPaymentIntent, refundPayment } = require('../services/payment')
 const { generateReceiptPDF } = require('../services/storage/receipt')
 const { sendPushNotification } = require('../config/firebase')
 const { success, successList, error, getPaginationParams, getDateRange, generateOrderNumber, calculateVAT } = require('../utils')
@@ -14,6 +14,8 @@ const logger = require('../config/logger')
 async function createOrder(req, res, next) {
   const session = await mongoose.startSession()
   session.startTransaction()
+
+  let committedOrder = null
 
   try {
     const { storeId, items, notes } = req.body
@@ -27,7 +29,15 @@ async function createOrder(req, res, next) {
 
     if (!store.gatewayConfig) {
       await session.abortTransaction()
-      return error(res, 'Store payment gateway not configured', 400)
+      return error(res, 'Store payment gateway is not configured. Please ask the store to set up their payment gateway.', 400)
+    }
+    if (!store.gatewayConfig.provider) {
+      await session.abortTransaction()
+      return error(res, 'Store payment gateway provider is not set. The store must choose Stripe or Checkout.com.', 400)
+    }
+    if (!store.gatewayConfig.secretKeyEncrypted) {
+      await session.abortTransaction()
+      return error(res, 'Store payment gateway secret key is missing. The store must reconfigure their payment gateway.', 400)
     }
 
     // Fetch & validate all products atomically
@@ -108,29 +118,79 @@ async function createOrder(req, res, next) {
     await Store.findByIdAndUpdate(storeId, { $inc: { totalOrders: 1 } }, { session })
 
     await session.commitTransaction()
+    committedOrder = order
 
-    // Create payment session (outside transaction)
-    const paymentSession = await createPaymentSession({
-      storeId,
-      orderId:      order._id.toString(),
-      orderNumber:  order.orderNumber,
-      amount:       total,
-      currency:     store.currency,
-      customerName: customer.name,
-      description:  `Order ${order.orderNumber} — ${store.name}`,
-    })
+    // Create payment session (outside transaction). Failures here must not
+    // abort the (already-committed) DB transaction.
+    let paymentData
+    try {
+      if (store.gatewayConfig.provider === 'stripe') {
+        paymentData = await createPaymentIntent({
+          storeId,
+          orderId:      order._id.toString(),
+          orderNumber:  order.orderNumber,
+          amount:       total,
+          currency:     store.currency,
+          customerEmail: customer.email,
+          customerName: customer.name,
+          description:  `Order ${order.orderNumber} — ${store.name}`,
+        })
+      } else {
+        // Fallback for Checkout.com
+        paymentData = await createPaymentSession({
+          storeId,
+          orderId:      order._id.toString(),
+          orderNumber:  order.orderNumber,
+          amount:       total,
+          currency:     store.currency,
+          customerName: customer.name,
+          items:        orderItems, // Added items for itemized billing
+          description:  `Order ${order.orderNumber} — ${store.name}`,
+        })
+      }
+    } catch (gatewayErr) {
+      // Roll the order back manually: mark cancelled and restore stock.
+      logger.error(`[createOrder] gateway failure for ${order.orderNumber}: ${gatewayErr.message}`)
+      await Order.findByIdAndUpdate(order._id, {
+        status:       'cancelled',
+        cancelReason: `Gateway error: ${gatewayErr.message}`,
+      })
+      await Promise.all(
+        orderItems.map((item) =>
+          Product.findByIdAndUpdate(item.productId, { $inc: { stock: item.quantity } })
+        )
+      )
+      return error(res, gatewayErr.message || 'Payment gateway unavailable', 502)
+    }
 
-    await Order.findByIdAndUpdate(order._id, { paymentSessionId: paymentSession.sessionId })
+    const sessionId = paymentData.paymentIntentId || paymentData.sessionId
+    await Order.findByIdAndUpdate(order._id, { paymentSessionId: sessionId })
 
     logger.info(`Order created: ${order.orderNumber} ($${total}) for ${customer.email}`)
-    return success(res, {
-      order,
-      paymentUrl: paymentSession.paymentUrl,
-      sessionId:  paymentSession.sessionId,
-      expiresAt:  paymentSession.expiresAt,
-    }, 201)
+
+    // Return Stripe PaymentSheet params OR Checkout.com URL depending on gateway
+    if (store.gatewayConfig.provider === 'stripe') {
+      return success(res, {
+        order,
+        storeName:      store.name,
+        clientSecret:   paymentData.clientSecret,
+        ephemeralKey:   paymentData.ephemeralKey,
+        customerId:     paymentData.customerId,
+        publishableKey: paymentData.publishableKey,
+      }, 201)
+    } else {
+      return success(res, {
+        order,
+        storeName:  store.name,
+        paymentUrl: paymentData.paymentUrl,
+        sessionId:  paymentData.sessionId,
+        expiresAt:  paymentData.expiresAt,
+      }, 201)
+    }
   } catch (err) {
-    await session.abortTransaction()
+    if (!committedOrder && session.inTransaction()) {
+      await session.abortTransaction()
+    }
     next(err)
   } finally {
     session.endSession()
@@ -155,11 +215,11 @@ async function getOrders(req, res, next) {
       filter.customerId = user._id
     }
 
-    if (status)  filter.status = status
-    if (storeId && user.role === 'superAdmin') filter.storeId = storeId
+    if (status)  {filter.status = status}
+    if (storeId && user.role === 'superAdmin') {filter.storeId = storeId}
 
     const dateRange = getDateRange(req.query)
-    if (dateRange) filter.createdAt = dateRange
+    if (dateRange) {filter.createdAt = dateRange}
 
     const [orders, total] = await Promise.all([
       Order.find(filter).sort(sort).skip(skip).limit(limit),
@@ -174,7 +234,7 @@ async function getOrders(req, res, next) {
 async function getOrder(req, res, next) {
   try {
     const order = await Order.findById(req.params.id)
-    if (!order) return error(res, 'Order not found', 404)
+    if (!order) {return error(res, 'Order not found', 404)}
 
     // IDOR: customers can only see their own orders
     if (req.user.role === 'customer' && order.customerId.toString() !== req.user._id.toString()) {
@@ -190,7 +250,7 @@ async function updateOrderStatus(req, res, next) {
   try {
     const { status } = req.body
     const order = await Order.findByIdAndUpdate(req.params.id, { status }, { new: true })
-    if (!order) return error(res, 'Order not found', 404)
+    if (!order) {return error(res, 'Order not found', 404)}
 
     const customer = await User.findById(order.customerId)
     if (customer?.fcmToken) {
@@ -223,12 +283,12 @@ async function refundOrder(req, res, next) {
   try {
     const { reason } = req.body
     const order = await Order.findById(req.params.id)
-    if (!order) return error(res, 'Order not found', 404)
+    if (!order) {return error(res, 'Order not found', 404)}
 
     if (!['paid', 'completed'].includes(order.status)) {
       return error(res, 'Order cannot be refunded in its current status', 400)
     }
-    if (!order.paymentReference) return error(res, 'No payment reference found', 400)
+    if (!order.paymentReference) {return error(res, 'No payment reference found', 400)}
 
     await refundPayment(order.storeId.toString(), order.paymentReference, order.total, order.currency)
 
@@ -263,7 +323,7 @@ async function refundOrder(req, res, next) {
 async function getOrderReceipt(req, res, next) {
   try {
     const order = await Order.findById(req.params.id)
-    if (!order) return error(res, 'Order not found', 404)
+    if (!order) {return error(res, 'Order not found', 404)}
 
     let receiptUrl = order.receiptUrl
     let qrCode = order.qrCode

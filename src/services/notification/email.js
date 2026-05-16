@@ -26,7 +26,7 @@ const APP_URL = process.env.APP_URL || 'http://localhost:3000'
 
 // ── Invite email ──────────────────────────────────────────
 async function sendInviteEmail({ to, storeName, role, inviteToken, inviterName, managerName }) {
-  const inviteUrl = `${APP_URL}/auth/invite/${inviteToken}`
+  const inviteUrl = `${APP_URL}/activate?token=${inviteToken}`
 
   const html = `
 <!DOCTYPE html>
@@ -75,7 +75,7 @@ async function sendInviteEmail({ to, storeName, role, inviteToken, inviterName, 
                 <tr>
                   <td style="padding:14px 16px;">
                     <p style="margin:0;font-size:13px;color:#92400E;line-height:1.5;">
-                      ⏰ This invite link expires in <strong>48 hours</strong>.
+                      ⏰ This invite link expires in <strong>72 hours</strong>.
                       If you did not expect this email, you can safely ignore it.
                     </p>
                   </td>
@@ -97,29 +97,41 @@ async function sendInviteEmail({ to, storeName, role, inviteToken, inviterName, 
 </body>
 </html>`
 
-  try {
-    if (process.env.NODE_ENV !== 'production') {
-      logger.info('\n======================================================')
-      logger.info('🧪 DEVELOPMENT MODE: INVITE LINK GENERATED')
-      logger.info(`🔗 ${inviteUrl}`)
-      logger.info('======================================================\n')
-    }
+  const maxRetries = 2
+  let lastError = null
 
-    await getResend().emails.send({
-      from:    FROM,
-      to,
-      subject: `You're invited to join ${storeName || 'KOUTIX'} as ${role}`,
-      html,
-    })
-    logger.info(`Invite email sent to ${to}`)
-  } catch (err) {
-    logger.error(`Failed to send invite email to ${to}:`, err)
-    // We don't throw the error in development so that the frontend doesn't crash
-    // just because Resend blocked the Yopmail email address.
-    if (process.env.NODE_ENV === 'production') {
-      throw err
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      if (process.env.NODE_ENV !== 'production') {
+        logger.info(`\n${'='.repeat(60)}`)
+        logger.info(`📧 INVITATION EMAIL (Attempt ${attempt}/${maxRetries})`)
+        logger.info(`To: ${to}`)
+        logger.info(`Role: ${role} at ${storeName}`)
+        logger.info(`🔗 ${inviteUrl}`)
+        logger.info(`${'='.repeat(60)}\n`)
+        return
+      }
+
+      await getResend().emails.send({
+        from: FROM,
+        to,
+        subject: `You're invited to ${storeName || 'KOUTIX'} as ${role}`,
+        html,
+      })
+
+      logger.info(`✓ Invite email delivered to ${to} (${role} at ${storeName})`)
+      return
+    } catch (err) {
+      lastError = err
+      logger.warn(`Email attempt ${attempt}/${maxRetries} failed for ${to}: ${err.message}`)
+      if (attempt < maxRetries) {
+        await new Promise(resolve => setTimeout(resolve, 1000 * attempt))
+      }
     }
   }
+
+  logger.error(`✗ Failed to send invite email to ${to} after ${maxRetries} attempts:`, lastError)
+  throw lastError
 }
 
 // ── Generic transactional email ───────────────────────────

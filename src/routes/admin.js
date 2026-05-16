@@ -9,11 +9,6 @@ const adminCtrl = require('../controllers/admin')
 
 const router = Router()
 
-// ── Development: Seed Test Data (no auth required) ─────────
-if (process.env.NODE_ENV !== 'production') {
-  router.post('/seed-test-data', adminCtrl.seedTestData)
-}
-
 router.use(authenticate)
 
 // ── Stats & Analytics ──────────────────────────────────────
@@ -49,5 +44,13 @@ router.get('/orders', requireSuperAdmin, adminCtrl.getAllOrders)
 // ── Chains & Entities ──────────────────────────────────────
 router.get('/chains', requireSuperAdmin, adminCtrl.getAllChains)
 router.get('/entities', requireSuperAdmin, adminCtrl.getAdminEntities)
+
+// ── Audit & Health ──────────────────────────────────────────
+router.get('/logs', requireSuperAdmin, adminCtrl.getAuditLogs)
+router.get('/health', requireSuperAdmin, adminCtrl.getSystemHealth)
+
+// ── Chain Managers with Branches & Store Managers ─────────
+router.get('/chain-managers', requireSuperAdmin, adminCtrl.getChainManagersWithBranches)
+router.get('/chain-managers/:id', requireSuperAdmin, adminCtrl.getChainManagerDetail)
 
 module.exports = router

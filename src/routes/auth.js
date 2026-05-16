@@ -31,5 +31,6 @@ router.post('/customer/verify',  authCtrl.customerVerify)
 router.post('/customer/social',  authCtrl.customerSocial)
 router.post('/customer/logout',  authenticate, authCtrl.customerLogout)
 router.get('/customer/me',       authenticate, requireRole('customer'), authCtrl.getMe)
+router.post('/customer/profile', authenticate, requireRole('customer'), authCtrl.updateCustomerProfile)
 
 module.exports = router

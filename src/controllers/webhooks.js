@@ -55,6 +55,17 @@ async function processStripeEvent(event, storeId) {
       }
       break
     }
+    case 'payment_intent.succeeded': {
+      const pi = event.data.object
+      if (pi.metadata?.type === 'customer_checkout') {
+        await markOrderPaid({
+          sessionId:        pi.id,      // we stored the PaymentIntent ID as the session ID
+          paymentReference: pi.id,
+          amount:           (pi.amount || 0) / 100,
+        })
+      }
+      break
+    }
     case 'checkout.session.expired': {
       const session = event.data.object
       await cancelOrderBySession(session.id)
@@ -103,23 +114,25 @@ async function handleCheckoutWebhook(req, res, next) {
 async function processCheckoutEvent(payload, _storeId) {
   const type = payload.type
 
-  if (type === 'payment_approved' || type === 'payment_captured') {
+  if (type === 'payment_approved' || type === 'payment_captured' || type === 'payment_link_paid') {
     const data = payload.data
-    const order = await Order.findOne({ orderNumber: data.reference })
+    const reference = data.reference || data.payment_reference
+    const order = await Order.findOne({ orderNumber: reference })
     if (order) {
       await markOrderPaid({
-        sessionId:        order.paymentSessionId || '',
-        paymentReference: data.action_id,
+        sessionId:        order.paymentSessionId || data.id || '',
+        paymentReference: data.action_id || data.payment_id || data.id,
         amount:           (data.amount || 0) / 100,
       })
     }
   }
 
-  if (type === 'payment_declined' || type === 'payment_expired') {
+  if (type === 'payment_declined' || type === 'payment_expired' || type === 'payment_link_expired') {
     const data = payload.data
-    const order = await Order.findOne({ orderNumber: data.reference })
+    const reference = data.reference || data.payment_reference
+    const order = await Order.findOne({ orderNumber: reference })
     if (order) {
-      await cancelOrderBySession(order.paymentSessionId || '')
+      await cancelOrderBySession(order.paymentSessionId || data.id || '')
     }
   }
 }

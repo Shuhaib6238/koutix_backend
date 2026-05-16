@@ -1,0 +1,731 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KOUTIX POS Connection System - Technical Documentation</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background: #f5f5f5;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: white;
+            padding: 40px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+
+        h1 {
+            color: #00E5A0;
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            border-bottom: 3px solid #00E5A0;
+            padding-bottom: 15px;
+        }
+
+        h2 {
+            color: #00E5A0;
+            font-size: 1.8em;
+            margin-top: 40px;
+            margin-bottom: 20px;
+            border-left: 4px solid #00E5A0;
+            padding-left: 15px;
+        }
+
+        h3 {
+            color: #333;
+            font-size: 1.3em;
+            margin-top: 25px;
+            margin-bottom: 15px;
+        }
+
+        .metadata {
+            background: #f9f9f9;
+            padding: 15px;
+            border-radius: 4px;
+            margin-bottom: 30px;
+            font-size: 0.95em;
+        }
+
+        .metadata p {
+            margin: 5px 0;
+        }
+
+        p {
+            margin-bottom: 15px;
+            text-align: justify;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+            background: white;
+            border: 1px solid #ddd;
+        }
+
+        th {
+            background: #00E5A0;
+            color: white;
+            padding: 12px;
+            text-align: left;
+            font-weight: 600;
+        }
+
+        td {
+            padding: 12px;
+            border-bottom: 1px solid #eee;
+        }
+
+        tr:hover {
+            background: #f9f9f9;
+        }
+
+        code, pre {
+            font-family: 'Courier New', Courier, monospace;
+            background: #f5f5f5;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+
+        code {
+            padding: 2px 6px;
+            font-size: 0.9em;
+        }
+
+        pre {
+            padding: 15px;
+            overflow-x: auto;
+            margin: 15px 0;
+            line-height: 1.4;
+        }
+
+        pre code {
+            background: none;
+            border: none;
+            padding: 0;
+        }
+
+        .toc {
+            background: #f0f8f5;
+            padding: 20px;
+            border-left: 4px solid #00E5A0;
+            margin: 20px 0;
+            border-radius: 4px;
+        }
+
+        .toc ol {
+            margin-left: 20px;
+        }
+
+        .toc li {
+            margin: 8px 0;
+        }
+
+        .toc a {
+            color: #00E5A0;
+            text-decoration: none;
+        }
+
+        .toc a:hover {
+            text-decoration: underline;
+        }
+
+        .endpoint {
+            background: #f9f9f9;
+            border-left: 4px solid #00E5A0;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 4px;
+        }
+
+        .endpoint-title {
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 10px;
+            font-family: 'Courier New', monospace;
+        }
+
+        .method-get {
+            color: #0066cc;
+        }
+
+        .method-post {
+            color: #00aa00;
+        }
+
+        .method-delete {
+            color: #cc0000;
+        }
+
+        .section {
+            margin-bottom: 30px;
+        }
+
+        .highlight {
+            background: #fff3cd;
+            padding: 15px;
+            border-radius: 4px;
+            border-left: 4px solid #ffc107;
+            margin: 15px 0;
+        }
+
+        .success {
+            background: #d4edda;
+            border-left-color: #28a745;
+            color: #155724;
+        }
+
+        .error {
+            background: #f8d7da;
+            border-left-color: #dc3545;
+            color: #721c24;
+        }
+
+        ul, ol {
+            margin-left: 20px;
+            margin-bottom: 15px;
+        }
+
+        li {
+            margin: 8px 0;
+        }
+
+        .checkbox {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid #00E5A0;
+            border-radius: 3px;
+            margin-right: 8px;
+            text-align: center;
+            line-height: 12px;
+            color: #00E5A0;
+            font-weight: bold;
+            font-size: 12px;
+        }
+
+        .feature-list li {
+            list-style: none;
+            padding-left: 25px;
+            position: relative;
+        }
+
+        .feature-list li:before {
+            content: "✓";
+            position: absolute;
+            left: 0;
+            color: #00E5A0;
+            font-weight: bold;
+        }
+
+        @media print {
+            body {
+                background: white;
+                padding: 0;
+            }
+
+            .container {
+                max-width: 100%;
+                box-shadow: none;
+                padding: 0;
+            }
+
+            h1, h2 {
+                page-break-after: avoid;
+            }
+
+            table, pre {
+                page-break-inside: avoid;
+            }
+
+            .container {
+                page-break-after: always;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>KOUTIX POS Connection System</h1>
+        <p style="font-size: 1.3em; color: #666; margin-bottom: 30px;">Complete Technical Documentation</p>
+
+        <div class="metadata">
+            <p><strong>Version:</strong> 1.0</p>
+            <p><strong>Date:</strong> April 24, 2026</p>
+            <p><strong>Project:</strong> Koutix Backend</p>
+        </div>
+
+        <div class="section">
+            <h2>Architecture Overview</h2>
+            <p>The Koutix POS Connection system is a robust integration framework that synchronizes point-of-sale data from multiple POS vendors (LS Retail, SAP) into the Koutix platform. The system supports two synchronization methods:</p>
+            <ol>
+                <li><strong>API Pull</strong> - Koutix periodically pulls data from the POS API</li>
+                <li><strong>Webhook</strong> - POS system pushes data directly to Koutix</li>
+            </ol>
+            <p>The architecture ensures:</p>
+            <ul>
+                <li>Secure credential storage (AES encryption)</li>
+                <li>Flexible authentication methods</li>
+                <li>Reliable data synchronization</li>
+                <li>Complete audit trail of all sync events</li>
+                <li>Real-time status monitoring</li>
+            </ul>
+        </div>
+
+        <div class="section">
+            <h2>Supported POS Types</h2>
+            <table>
+                <tr>
+                    <th>POS Type</th>
+                    <th>Description</th>
+                    <th>Sync Methods</th>
+                    <th>Status</th>
+                </tr>
+                <tr>
+                    <td><strong>ls_retail</strong></td>
+                    <td>LS Retail Point of Sale</td>
+                    <td>api_pull, webhook</td>
+                    <td>✓ Active</td>
+                </tr>
+                <tr>
+                    <td><strong>sap</strong></td>
+                    <td>SAP ERP System</td>
+                    <td>webhook</td>
+                    <td>✓ Active</td>
+                </tr>
+                <tr>
+                    <td><strong>custom</strong></td>
+                    <td>Custom Integration</td>
+                    <td>api_pull, webhook</td>
+                    <td>✓ Active</td>
+                </tr>
+            </table>
+        </div>
+
+        <div class="section">
+            <h2>Data Model</h2>
+            <h3>Store.posConnection Schema</h3>
+            <pre><code>{
+  posType: String,              // 'ls_retail' | 'sap' | 'custom' | null
+  method: String,               // 'api_pull' | 'webhook' | null
+  status: String,               // 'disconnected' | 'connected' | 'error'
+  encryptedCredentials: String, // AES-256 encrypted
+  webhookSecret: String,        // 32-byte hex for validation
+  pullIntervalSeconds: Number,  // default: 300 for api_pull
+  lastSyncAt: Date,             // last sync timestamp
+  lastSyncStatus: String,       // 'success' | 'fail' | null
+  lastErrorMessage: String      // error details
+}</code></pre>
+        </div>
+
+        <div class="section">
+            <h2>API Endpoints</h2>
+
+            <div class="endpoint">
+                <div class="endpoint-title"><span class="method-get">GET</span> /api/pos/connectors</div>
+                <p><strong>Authentication:</strong> Required</p>
+                <p><strong>Response:</strong></p>
+                <pre><code>{
+  "success": true,
+  "data": ["ls_retail", "sap", "custom"]
+}</code></pre>
+            </div>
+
+            <div class="endpoint">
+                <div class="endpoint-title"><span class="method-post">POST</span> /api/pos/stores/:storeId/connect</div>
+                <p><strong>Authentication:</strong> Required (Branch Manager or higher)</p>
+                <p><strong>Request Body:</strong></p>
+                <pre><code>{
+  "posType": "ls_retail",
+  "method": "api_pull",
+  "credentials": {
+    "baseUrl": "https://api.lsretail.com",
+    "apiKey": "your-api-key"
+  },
+  "pullIntervalSeconds": 300
+}</code></pre>
+            </div>
+
+            <div class="endpoint">
+                <div class="endpoint-title"><span class="method-get">GET</span> /api/pos/status</div>
+                <p><strong>Authentication:</strong> Required</p>
+                <p><strong>Response:</strong></p>
+                <pre><code>{
+  "success": true,
+  "data": {
+    "posType": "ls_retail",
+    "method": "api_pull",
+    "status": "connected",
+    "lastSyncAt": "2026-04-24T15:30:45Z",
+    "lastSyncStatus": "success",
+    "lastErrorMessage": null
+  }
+}</code></pre>
+            </div>
+
+            <div class="endpoint">
+                <div class="endpoint-title"><span class="method-post">POST</span> /api/pos/test</div>
+                <p><strong>Authentication:</strong> Required</p>
+                <p>Test POS connection before saving</p>
+            </div>
+
+            <div class="endpoint">
+                <div class="endpoint-title"><span class="method-delete">DELETE</span> /api/pos/stores/:storeId/disconnect</div>
+                <p><strong>Authentication:</strong> Required (Branch Manager or higher)</p>
+                <p>Disconnect POS system and remove credentials</p>
+            </div>
+
+            <div class="endpoint">
+                <div class="endpoint-title"><span class="method-get">GET</span> /api/pos/events</div>
+                <p><strong>Authentication:</strong> Required</p>
+                <p>Get last 50 sync events with full payload details</p>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Connection Flow</h2>
+            <h3>Phase 1: Validation</h3>
+            <ol>
+                <li>Verify POS type is valid (ls_retail, sap, custom)</li>
+                <li>Verify sync method is valid (api_pull, webhook)</li>
+                <li>Verify credentials object is present and valid</li>
+            </ol>
+
+            <h3>Phase 2: Authentication</h3>
+            <ol>
+                <li>Verify user is authenticated</li>
+                <li>Verify user has branch_manager role or higher</li>
+                <li>Verify user has access to the specified store</li>
+            </ol>
+
+            <h3>Phase 3: Connection Testing</h3>
+            <p><strong>For api_pull:</strong></p>
+            <ul>
+                <li>Make real API call to POS endpoint</li>
+                <li>Verify authentication works</li>
+                <li>Verify API returns valid response</li>
+            </ul>
+            <p><strong>For webhook:</strong></p>
+            <ul>
+                <li>If sapServerUrl provided, send test ping</li>
+                <li>Verify server responds</li>
+                <li>If no URL, assume ready to receive</li>
+            </ul>
+
+            <h3>Phase 4: Credential Encryption</h3>
+            <ul>
+                <li>Serialize credentials to JSON</li>
+                <li>Generate random AES-256 IV</li>
+                <li>Encrypt using AES-256-CBC</li>
+                <li>Store encrypted blob in database</li>
+            </ul>
+
+            <h3>Phase 5: Webhook Secret Generation</h3>
+            <ul>
+                <li>Generate 32 random bytes</li>
+                <li>Convert to hex string (64 characters)</li>
+                <li>Store in database</li>
+                <li>Return to client (only at connection time)</li>
+            </ul>
+
+            <h3>Phase 6: Job Scheduling</h3>
+            <p><strong>If api_pull:</strong> Create BullMQ repeating job every pullIntervalSeconds</p>
+            <p><strong>If webhook:</strong> No job needed, wait for incoming requests</p>
+        </div>
+
+        <div class="section">
+            <h2>API Pull Implementation</h2>
+            <h3>Process Flow</h3>
+            <ol>
+                <li>Decrypt credentials from database</li>
+                <li>Calculate time window (lastSyncAt or 24h ago)</li>
+                <li>Build authentication header (Bearer token or Basic auth)</li>
+                <li>Make API request to POS endpoint</li>
+                <li>Parse response (handle array or object formats)</li>
+                <li>Convert using adapter to Koutix format</li>
+                <li>Log all events (success and errors)</li>
+                <li>Update store record with sync status</li>
+                <li>Log summary</li>
+            </ol>
+
+            <h3>Error Handling</h3>
+            <div class="highlight error">
+                <strong>Decryption Error:</strong> Log error, mark sync as failed
+            </div>
+            <div class="highlight error">
+                <strong>API Call Error:</strong> Log error, update lastErrorMessage
+            </div>
+            <div class="highlight error">
+                <strong>Conversion Error:</strong> Log specific error, continue processing
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Webhook Implementation</h2>
+            <h3>Endpoint: POST /api/pos/webhook/:branchId/:posType</h3>
+            <p><strong>Security Features:</strong></p>
+            <ul>
+                <li>No authentication required (secret-based validation)</li>
+                <li>Validates x-webhook-secret header</li>
+                <li>Validates POS type matches</li>
+                <li>Validates connection status is 'connected'</li>
+            </ul>
+
+            <h3>Response Strategy</h3>
+            <div class="highlight success">
+                Always returns 200 OK with message "Webhook received"
+            </div>
+            <p>This prevents the POS system from retrying. Processing happens asynchronously after response is sent.</p>
+
+            <h3>Processing Steps</h3>
+            <ol>
+                <li>Normalize payload to array</li>
+                <li>Convert with appropriate adapter</li>
+                <li>Log successful and failed conversions</li>
+                <li>Update store sync status</li>
+                <li>Log any errors (but don't retry)</li>
+            </ol>
+        </div>
+
+        <div class="section">
+            <h2>Security & Encryption</h2>
+            <h3>Credential Encryption</h3>
+            <ul>
+                <li><strong>Algorithm:</strong> AES-256-CBC</li>
+                <li><strong>Key Size:</strong> 256 bits</li>
+                <li><strong>IV:</strong> Random 16 bytes per encryption</li>
+                <li><strong>Format:</strong> iv:encryptedData (hex:hex)</li>
+            </ul>
+
+            <h3>Webhook Secret</h3>
+            <ul>
+                <li>Generated: 32 random bytes → 64 hex characters</li>
+                <li>Stored in: store.posConnection.webhookSecret</li>
+                <li>Validated via: x-webhook-secret header</li>
+                <li>Unique per connection</li>
+            </ul>
+
+            <h3>Credential Protection</h3>
+            <ul>
+                <li>Never returned in API responses</li>
+                <li>Only decrypted when needed for API calls</li>
+                <li>Never logged in plaintext</li>
+                <li>Errors sanitize sensitive data</li>
+            </ul>
+        </div>
+
+        <div class="section">
+            <h2>Event Logging</h2>
+            <h3>PosEvent Model</h3>
+            <pre><code>{
+  branchId: ObjectId,
+  posType: String,
+  rawPayload: Object,        // Original from POS
+  convertedPayload: Object,  // Standardized format
+  status: 'success' | 'fail',
+  errorMessage: String,      // If status === 'fail'
+  receivedAt: Date,
+  timestamps: { createdAt, updatedAt }
+}</code></pre>
+
+            <h3>Event States</h3>
+            <p><strong>Successful Sync:</strong></p>
+            <ul>
+                <li>rawPayload: transaction data</li>
+                <li>convertedPayload: standardized format</li>
+                <li>status: 'success'</li>
+                <li>errorMessage: null</li>
+            </ul>
+
+            <p><strong>Failed Sync:</strong></p>
+            <ul>
+                <li>rawPayload: transaction data</li>
+                <li>convertedPayload: null</li>
+                <li>status: 'fail'</li>
+                <li>errorMessage: reason for failure</li>
+            </ul>
+        </div>
+
+        <div class="section">
+            <h2>Adapter System</h2>
+            <p>The adapter pattern provides flexible handling of different POS formats:</p>
+            <pre><code>POS System → Raw Data → Adapter → Standardized Format → Koutix</code></pre>
+
+            <table>
+                <tr>
+                    <th>Adapter</th>
+                    <th>File</th>
+                    <th>Supports</th>
+                </tr>
+                <tr>
+                    <td><strong>LSRetailAdapter</strong></td>
+                    <td>src/adapters/LSRetailAdapter.js</td>
+                    <td>LS Retail API format</td>
+                </tr>
+                <tr>
+                    <td><strong>SAPAdapter</strong></td>
+                    <td>src/adapters/SAPAdapter.js</td>
+                    <td>SAP webhook format</td>
+                </tr>
+                <tr>
+                    <td><strong>BaseAdapter</strong></td>
+                    <td>src/adapters/BaseAdapter.js</td>
+                    <td>Abstract base class</td>
+                </tr>
+            </table>
+
+            <h3>Standardized Event Format</h3>
+            <pre><code>{
+  transactionId: String,
+  amount: Number,
+  currency: String,
+  timestamp: String,        // ISO 8601
+  items: Array,
+  customer: {
+    id: String,
+    name: String,
+    phone: String
+  },
+  metadata: Object
+}</code></pre>
+        </div>
+
+        <div class="section">
+            <h2>Error Handling</h2>
+            <table>
+                <tr>
+                    <th>Error</th>
+                    <th>Status Code</th>
+                    <th>Message</th>
+                </tr>
+                <tr>
+                    <td>Invalid POS type</td>
+                    <td>400</td>
+                    <td>Invalid posType. Must be one of: ls_retail, sap, custom</td>
+                </tr>
+                <tr>
+                    <td>Invalid method</td>
+                    <td>400</td>
+                    <td>Invalid method. Must be "api_pull" or "webhook"</td>
+                </tr>
+                <tr>
+                    <td>No credentials</td>
+                    <td>400</td>
+                    <td>Credentials are required</td>
+                </tr>
+                <tr>
+                    <td>Store not found</td>
+                    <td>404</td>
+                    <td>No store found for this branch manager</td>
+                </tr>
+                <tr>
+                    <td>Connection test failed</td>
+                    <td>400</td>
+                    <td>Connection test failed: {error message}</td>
+                </tr>
+                <tr>
+                    <td>Invalid webhook secret</td>
+                    <td>401</td>
+                    <td>Invalid webhook secret</td>
+                </tr>
+            </table>
+        </div>
+
+        <div class="section">
+            <h2>Key Features</h2>
+            <ul class="feature-list">
+                <li>Encrypted credentials - Never stored in plain text</li>
+                <li>Webhook secret validation - Prevents unauthorized webhooks</li>
+                <li>Connection testing - Validates before saving</li>
+                <li>Async processing - Webhooks return immediately</li>
+                <li>Event audit trail - All sync attempts logged</li>
+                <li>Error tracking - Last error persisted for UI</li>
+                <li>Flexible auth - API keys, basic auth, or webhook secrets</li>
+                <li>Multiple POS support - Extensible adapter architecture</li>
+            </ul>
+        </div>
+
+        <div class="section">
+            <h2>Implementation Files</h2>
+            <table>
+                <tr>
+                    <th>File</th>
+                    <th>Purpose</th>
+                </tr>
+                <tr>
+                    <td>src/controllers/posConnection.js</td>
+                    <td>Main API endpoint handlers</td>
+                </tr>
+                <tr>
+                    <td>src/controllers/pos.js</td>
+                    <td>POS connection control logic</td>
+                </tr>
+                <tr>
+                    <td>src/services/pos/posSync.service.js</td>
+                    <td>Core sync logic (pull + webhook)</td>
+                </tr>
+                <tr>
+                    <td>src/adapters/BaseAdapter.js</td>
+                    <td>Abstract adapter class</td>
+                </tr>
+                <tr>
+                    <td>src/adapters/LSRetailAdapter.js</td>
+                    <td>LS Retail format converter</td>
+                </tr>
+                <tr>
+                    <td>src/adapters/SAPAdapter.js</td>
+                    <td>SAP format converter</td>
+                </tr>
+                <tr>
+                    <td>src/adapters/AdapterFactory.js</td>
+                    <td>Adapter factory pattern</td>
+                </tr>
+                <tr>
+                    <td>src/models/PosEvent.js</td>
+                    <td>Event logging model</td>
+                </tr>
+                <tr>
+                    <td>src/routes/pos.js</td>
+                    <td>API route definitions</td>
+                </tr>
+                <tr>
+                    <td>src/jobs/posPull.job.js</td>
+                    <td>BullMQ job handler</td>
+                </tr>
+            </table>
+        </div>
+
+        <div class="section">
+            <h2>Summary</h2>
+            <p>The Koutix POS Connection system provides:</p>
+            <ul class="feature-list">
+                <li>Flexible Integration - Support for multiple POS types and sync methods</li>
+                <li>Secure Credentials - AES-256 encryption for sensitive data</li>
+                <li>Reliable Sync - Both pull (scheduled) and push (webhook) methods</li>
+                <li>Complete Audit Trail - All events logged for troubleshooting</li>
+                <li>Error Handling - Comprehensive error messages and recovery</li>
+                <li>Extensible Architecture - Adapter pattern for new POS types</li>
+            </ul>
+        </div>
+
+        <hr style="margin-top: 50px; border: none; border-top: 2px solid #00E5A0; opacity: 0.3;">
+        <p style="text-align: center; color: #999; margin-top: 30px; font-size: 0.9em;">
+            <strong>End of Documentation</strong> | Generated: April 24, 2026
+        </p>
+    </div>
+</body>
+</html>

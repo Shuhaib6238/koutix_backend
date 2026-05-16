@@ -10,6 +10,7 @@ const { connectDB }                = require('./config/database')
 const { connectRedis, disconnectRedis } = require('./config/redis')
 const { initFirebaseAdmin }        = require('./config/firebase')
 const { socketAuthMiddleware }     = require('./middleware')
+const { startWorkers }             = require('./jobs/workers')
 const logger                       = require('./config/logger')
 
 const PORT = parseInt(process.env.PORT || '5000', 10)
@@ -37,7 +38,7 @@ async function bootstrap() {
     await connectDB()
     await connectRedis()
     initFirebaseAdmin()
-    // startWorkers()
+    startWorkers()
 
     // Start HTTP server
     httpServer.listen(PORT, () => {

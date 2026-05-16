@@ -24,13 +24,19 @@ router.get('/branch', requireAnyStaff, async (req, res, next) => {
           { chainId: user._id },
         ],
       })
-      if (store) storeFilter = { storeId: store._id }
+      if (store) {
+        storeFilter = { storeId: store._id }
+      }
     } else if (role === 'branch_manager') {
-      if (user.storeId) storeFilter = { storeId: user.storeId }
+      if (user.storeId) {
+        storeFilter = { storeId: user.storeId }
+      }
     } else if (role === 'chain_manager') {
       const stores = await Store.find({ chainId: user._id }).select('_id')
       const ids = stores.map((s) => s._id)
-      if (ids.length) storeFilter = { storeId: { $in: ids } }
+      if (ids.length) {
+        storeFilter = { storeId: { $in: ids } }
+      }
     }
 
     // Today's date range

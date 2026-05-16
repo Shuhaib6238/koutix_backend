@@ -6,13 +6,16 @@ const { Schema } = mongoose
 
 const InviteTokenSchema = new Schema(
   {
-    token:      { type: String, required: true, unique: true, index: true },
-    email:      { type: String, required: true, lowercase: true, trim: true },
-    chainId:    { type: Schema.Types.ObjectId, ref: 'ChainManager', required: true },
-    branchName: { type: String, required: true, trim: true },
-    expiresAt:  { type: Date, required: true },
-    used:       { type: Boolean, default: false },
-    usedAt:     Date,
+    token:       { type: String, required: true, unique: true, index: true },
+    email:       { type: String, required: true, lowercase: true, trim: true },
+    chainId:     { type: Schema.Types.ObjectId, ref: 'ChainManager', required: true },
+    branchName:  { type: String, required: true, trim: true },
+    expiresAt:   { type: Date, required: true },
+    used:        { type: Boolean, default: false },
+    usedAt:      Date,
+    emailSent:   { type: Boolean, default: false },
+    emailSentAt: Date,
+    emailError:  String,
   },
   { timestamps: true }
 )

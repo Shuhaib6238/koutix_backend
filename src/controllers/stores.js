@@ -31,13 +31,13 @@ async function getChainBranches(req, res, next) {
 async function getBranchSales(req, res, next) {
   try {
     const chainId = req.user._id
-    
+
     // 1. Get all stores for this chain
     const stores = await Store.find({ chainId }).select('name address totalRevenue totalOrders status managerId').lean()
-    
+
     // 2. Get all invited managers for this chain to show gaps
     const invited = await BranchManager.find({ chainId }).lean()
-    
+
     // Today's starts for aggregation
     const today = new Date()
     today.setHours(0, 0, 0, 0)
@@ -47,9 +47,9 @@ async function getBranchSales(req, res, next) {
         { $match: { storeId: s._id, status: { $in: ['paid', 'completed'] }, createdAt: { $gte: today } } },
         { $group: { _id: null, total: { $sum: '$total' }, count: { $sum: 1 } } }
       ])
-      
+
       const lastOrder = await Order.findOne({ storeId: s._id }).sort({ createdAt: -1 })
-      
+
       // Find the manager details from BranchManager if active
       const mgr = invited.find(i => i.email === s.email) || {}
 
@@ -121,14 +121,123 @@ async function getStores(req, res, next) {
   } catch (err) { next(err) }
 }
 
+// ── GET /stores/customer ─────────────────────────────────
+// Returns every currently active store, sorted alphabetically. No radius
+// filter — the customer app shows them all and computes distances client-side.
+async function getCustomerStores(req, res, next) {
+  try {
+    const stores = await Store.find({ status: 'active' })
+      .sort({ name: 1 })
+      .lean()
+
+    const formattedStores = stores.map(s => ({
+      id: s._id.toString(),
+      name: s.name,
+      logoUrl: s.logo || '',
+      coverUrl: s.coverImage || '',
+      address: s.address
+        ? [s.address.street, s.address.city].filter(Boolean).join(', ')
+        : '',
+      hours: s.operatingHours ? `${s.operatingHours.open} - ${s.operatingHours.close}` : 'Closed',
+      lat: s.address?.coordinates?.lat || 0,
+      lng: s.address?.coordinates?.lng || 0,
+      isOpen: true,
+      isPromoted: s.isPromoted || false,
+      primaryColor: s.primaryColor || '#00E5A0',
+      publicPaymentKey: s.gatewayConfig?.publicKeyEncrypted || '',
+    }))
+
+    return success(res, formattedStores)
+  } catch (err) { next(err) }
+}
+
+// ── GET /stores/nearby ───────────────────────────────────
+// Returns active stores filtered by radius and distance, with distance calculated
+async function getNearbyStores(req, res, next) {
+  try {
+    const { lat, lng, radius = 20 } = req.query
+    const latitude = parseFloat(lat)
+    const longitude = parseFloat(lng)
+
+    // Base query for active stores
+    const baseFilter = { status: 'active' }
+
+    let nearbyDocs = []
+    if (!isNaN(latitude) && !isNaN(longitude)) {
+      // Using MongoDB $nearSphere if geospatial index is present, or just finding all and calculating
+      // Assuming store schema has 'location' for 2dsphere index:
+      nearbyDocs = await Store.find({
+        ...baseFilter,
+        location: {
+          $nearSphere: {
+            $geometry: { type: 'Point', coordinates: [longitude, latitude] },
+            $maxDistance: radius * 1000 // Convert km to meters
+          }
+        }
+      }).lean()
+    } else {
+      nearbyDocs = await Store.find(baseFilter).lean()
+    }
+
+    // Helper to calculate distance in JS if needed, but we'll approximate or leave to client if 0.0
+    // Actually, $nearSphere doesn't return distance in the document unless we use aggregate $geoNear.
+    // For simplicity, we calculate straight-line distance here for response formatting.
+    const deg2rad = deg => deg * (Math.PI / 180)
+    const getDist = (lat1, lon1, lat2, lon2) => {
+      const R = 6371 // Radius of the earth in km
+      const dLat = deg2rad(lat2 - lat1)
+      const dLon = deg2rad(lon2 - lon1)
+      const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) *
+                Math.sin(dLon/2) * Math.sin(dLon/2)
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a))
+      return R * c // Distance in km
+    }
+
+    const formattedStores = nearbyDocs.map(s => {
+      const sLat = s.address?.coordinates?.lat || 0
+      const sLng = s.address?.coordinates?.lng || 0
+      const distance = (!isNaN(latitude) && !isNaN(longitude)) ? getDist(latitude, longitude, sLat, sLng) : 0
+
+      return {
+        id: s._id.toString(),
+        name: s.name,
+        logoUrl: s.logo || '',
+        coverUrl: s.coverImage || '',
+        address: s.address ? [s.address.street, s.address.city].filter(Boolean).join(', ') : '',
+        hours: s.operatingHours ? `${s.operatingHours.open} - ${s.operatingHours.close}` : 'Closed',
+        lat: sLat,
+        lng: sLng,
+        distanceKm: distance,
+        isOpen: true,
+        isPromoted: s.isPromoted || false,
+        primaryColor: s.primaryColor || '#00E5A0',
+        publicPaymentKey: s.gatewayConfig?.publicKeyEncrypted || '',
+      }
+    })
+
+    return success(res, formattedStores)
+  } catch (err) { next(err) }
+}
+
 // ── GET /stores/:id ──────────────────────────────────────
 async function getStore(req, res, next) {
   try {
-    const store = await Store.findById(req.params.id).select('-gatewayConfig')
+    const store = await Store.findById(req.params.id)
     if (!store) {
       return error(res, 'Store not found', 404)
     }
-    return success(res, store)
+
+    // Strip secrets but expose provider name + whether gateway is configured
+    const storeObj = store.toObject()
+    storeObj.paymentProvider = store.gatewayConfig?.provider || null
+    storeObj.paymentConfigured = !!(
+      store.gatewayConfig?.provider &&
+      store.gatewayConfig?.secretKeyEncrypted
+    )
+    delete storeObj.gatewayConfig
+
+    return success(res, storeObj)
   } catch (err) { next(err) }
 }
 
@@ -289,7 +398,7 @@ async function inviteManager(req, res, next) {
 
     // 3. Keep User record (migration support)
     const hashedToken = crypto.createHash('sha256').update(token).digest('hex')
-    
+
     await User.findOneAndUpdate(
       { email },
       {
@@ -397,5 +506,5 @@ module.exports = {
   updatePaymentGateway, getStoreStats, inviteManager,
   getPosStatus, triggerPosSync,
   approveStore, rejectStore, suspendStore,
-  getChainBranches, getBranchSales
+  getChainBranches, getBranchSales, getCustomerStores, getNearbyStores
 }
